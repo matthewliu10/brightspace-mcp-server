@@ -28,7 +28,7 @@ beforeEach(async () => {
   directory = await fs.mkdtemp(path.join(os.tmpdir(), "brightspace-headless-test-"));
   const config = {
     baseUrl: "https://school.example", sessionDir: directory, tokenTtl: 3600,
-    headless: false, username: "student", password: "dummy",
+    headless: true, username: "student", password: "dummy",
     courseFilter: {},
   } as AppConfig;
   page = { on: vi.fn(), removeListener: vi.fn() };
@@ -44,8 +44,8 @@ beforeEach(async () => {
 
 afterEach(() => { vi.restoreAllMocks(); });
 
-describe("headless BrowserAuth lifecycle", () => {
-  it("always launches an ephemeral headless context and restores state without checking its age", async () => {
+describe("BrowserAuth lifecycle", () => {
+  it("launches an ephemeral headless context and restores state without checking its age", async () => {
     const onAuthenticated = vi.fn(async () => {});
     await expect(auth.authenticate({ onAuthenticated })).resolves.toEqual(token);
     expect(mocks.launch).toHaveBeenCalledWith(expect.objectContaining({ headless: true, timeout: 60000 }));
@@ -56,6 +56,12 @@ describe("headless BrowserAuth lifecycle", () => {
     expect(browser.close).toHaveBeenCalledOnce();
     expect(context.close).toHaveBeenCalledOnce();
     expect(await fs.readdir(directory)).not.toContain("browser-data");
+  });
+
+  it("can launch a visible browser when configured for manual auth", async () => {
+    (auth as any).config.headless = false;
+    await expect(auth.authenticate()).resolves.toEqual(token);
+    expect(mocks.launch).toHaveBeenCalledWith(expect.objectContaining({ headless: false, timeout: 60000 }));
   });
 
   it("holds the process lock until token persistence finishes", async () => {

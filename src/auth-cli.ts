@@ -15,10 +15,16 @@ const pkg = JSON.parse(readFileSync(path.resolve(path.dirname(fileURLToPath(impo
 
 async function main(): Promise<void> {
   const automatic = process.argv.includes("--automatic");
+  if (process.argv.includes("--visible")) process.env.D2L_HEADLESS = "false";
+  if (process.argv.includes("--headless")) process.env.D2L_HEADLESS = "true";
   try {
     const config = await loadConfig();
     console.error(`\n=== Brightspace Authentication v${pkg.version} ===\n`);
-    console.error("Authentication runs headlessly. If Microsoft requests MFA, the number appears here.");
+    if (config.headless) {
+      console.error("Authentication runs headlessly. If Microsoft requests MFA, the number appears here.");
+    } else {
+      console.error("Authentication will open a browser window. Finish your school login and MFA there.");
+    }
 
     const tokenManager = new TokenManager({
       sessionDir: config.sessionDir,

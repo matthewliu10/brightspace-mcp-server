@@ -188,6 +188,22 @@ describe("BrowserAuth.navigateAndLogin", () => {
     expect(ssoFlow.login).not.toHaveBeenCalled();
   });
 
+  it("opens visible auth for manual SSO and waits for the real Brightspace home page", async () => {
+    withConfig({ headless: false });
+    const { page } = makePage({
+      url: "https://idp.example.edu/login",
+      onTick: (state) => {
+        state.cookies = LIVE_SESSION.cookies;
+        state.d2l = true;
+        state.url = `${BASE_URL}/d2l/home/12345`;
+      },
+    });
+
+    await expect(navigate(page)).resolves.toBe(false);
+    expect(ssoFlow.login).not.toHaveBeenCalled();
+    expect(page.waitForTimeout).toHaveBeenCalledOnce();
+  });
+
   it("does not treat a session cookie without a D2L JS context as authenticated", async () => {
     const { page } = makePage({
       url: `${BASE_URL}/d2l/home`,
