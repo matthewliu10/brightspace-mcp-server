@@ -10,8 +10,9 @@ import { createHash } from "node:crypto";
 import dotenv from "dotenv";
 import type { AppConfig } from "../types/index.js";
 import { configStoreExists, loadConfigStore } from "./config-store.js";
-import { resolveStoredPassword } from "./secure-config.js";
 import { migrateLegacyState } from "../auth/legacy-state.js";
+
+export const WATERLOO_BRIGHTSPACE_URL = "https://learn.uwaterloo.ca";
 
 export async function loadConfig(): Promise<AppConfig> {
   dotenv.config({ quiet: true });
@@ -30,9 +31,7 @@ export async function loadConfig(): Promise<AppConfig> {
       ? expandTilde(store.sessionDir)
       : path.join(os.homedir(), ".d2l-session");
 
-  // Visible auth is useful for schools whose Duo/SSO flow cannot be driven
-  // reliably in headless Chromium. Default remains headless for compatibility.
-  const headless = resolveHeadless(process.env.D2L_HEADLESS, store?.headless);
+  const headless = false;
 
   // Resolve tokenTtl: env > store > default (3600)
   const tokenTtl = process.env.D2L_TOKEN_TTL
@@ -55,13 +54,12 @@ export async function loadConfig(): Promise<AppConfig> {
     activeOnly = process.env.D2L_ACTIVE_ONLY !== 'false';
   }
 
-  const configuredUrl = new URL(process.env.D2L_BASE_URL || store?.baseUrl || "https://purdue.brightspace.com");
+  const configuredUrl = new URL(WATERLOO_BRIGHTSPACE_URL);
   if (configuredUrl.protocol !== "https:" || configuredUrl.username || configuredUrl.password) {
     throw new Error("The Brightspace URL must be an HTTPS school URL without embedded credentials.");
   }
   const baseUrl = configuredUrl.origin;
   const username = process.env.D2L_USERNAME || store?.username;
-  const password = await resolveStoredPassword(baseUrl, username, store);
   // A new account must never inherit another account's cookies, even at the same school.
   const sessionDir = accountSessionDirectory(sessionRoot, baseUrl, username);
   const legacyMigration = sessionDir !== sessionRoot ? await migrateLegacyState(sessionRoot) : undefined;
@@ -74,7 +72,7 @@ export async function loadConfig(): Promise<AppConfig> {
     tokenTtl,
     headless,
     username,
-    password,
+    password: undefined,
     campus: process.env.D2L_CAMPUS || store?.campus,
     courseFilter: {
       includeCourseIds,
@@ -95,13 +93,6 @@ function expandTilde(filePath: string): string {
     return path.join(os.homedir(), filePath.slice(1));
   }
   return filePath;
-}
-
-function resolveHeadless(envValue: string | undefined, storedValue: boolean | undefined): boolean {
-  if (envValue !== undefined) {
-    return !["0", "false", "no", "off"].includes(envValue.trim().toLowerCase());
-  }
-  return storedValue ?? true;
 }
 
 export type { AppConfig };

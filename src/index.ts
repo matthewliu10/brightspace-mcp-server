@@ -13,7 +13,6 @@ import { enableStdoutGuard, log } from "./utils/logger.js";
 import { loadConfig } from "./utils/config.js";
 import { TokenManager, AuthRunner } from "./auth/index.js";
 import { D2LApiClient } from "./api/index.js";
-import { initUpdateChecker, getUpdateNotice } from "./utils/update-checker.js";
 import { readFileSync } from "node:fs";
 import { fileURLToPath } from "node:url";
 import { dirname, resolve } from "node:path";
@@ -71,13 +70,12 @@ if (subcommand === 'setup') {
       const server = new McpServer({
         name: "brightspace",
         version: PKG_VERSION,
-        description: "Brightspace MCP Server — by Rohan Muppa (github.com/rohanmuppa/brightspace-mcp-server)",
+        description: "Waterloo Brightspace MCP Server",
       }, { capabilities: { logging: {} } });
       log("INFO", "");
       log("INFO", "========================================");
-      log("INFO", `  Brightspace MCP Server v${PKG_VERSION}`);
-      log("INFO", "  By Rohan Muppa — ECE @ Purdue");
-      log("INFO", "  github.com/rohanmuppa/brightspace-mcp-server");
+      log("INFO", `  Waterloo Brightspace MCP Server v${PKG_VERSION}`);
+      log("INFO", "  https://learn.uwaterloo.ca");
       log("INFO", "========================================");
       log("INFO", "");
 
@@ -112,9 +110,6 @@ if (subcommand === 'setup') {
         process.exit(1);
       }
 
-      // Start background update check (fire and forget)
-      initUpdateChecker();
-
       // Register check_auth tool (no input schema needed for zero-argument tool)
       server.registerTool(
         "check_auth",
@@ -122,7 +117,7 @@ if (subcommand === 'setup') {
           title: "Check Authentication Status",
           description:
             "Check if you are authenticated with Brightspace. " +
-            "Run the brightspace-auth CLI first to authenticate. " +
+            "Run `node build/auth-cli.js` first to authenticate. " +
             "Use this when the user asks if they're logged in, if authentication is working, " +
             "or when other tools return auth errors.",
         },
@@ -146,12 +141,9 @@ if (subcommand === 'setup') {
                 {
                   type: "text",
                   text: "Not authenticated. Auto-reauthentication was attempted but failed. " +
-                    "Please run `brightspace-auth` manually in your terminal to log in. " +
-                    "Run setup to update your saved credentials, and check your internet connection.",
+                    "Please run `node build/auth-cli.js` manually in your terminal to log in to Waterloo LEARN.",
                 },
               ];
-              const notice = getUpdateNotice();
-              if (notice) content.push({ type: "text", text: notice });
               return { content };
             }
 
@@ -167,8 +159,6 @@ if (subcommand === 'setup') {
               text: `Authenticated with Brightspace. Token expires in ~${expiresIn} minutes. Source: ${token.source}.`,
             },
           ];
-          const notice = getUpdateNotice();
-          if (notice) content.push({ type: "text", text: notice });
           return { content };
         }
       );
@@ -203,8 +193,7 @@ if (subcommand === 'setup') {
       const transport = new StdioServerTransport();
       await server.connect(transport);
 
-      log("INFO", "Brightspace MCP Server by Rohan Muppa — running on stdio (12 tools registered)");
-      log("INFO", "Setup: see README.md for MCP client configuration (Claude Desktop, ChatGPT Desktop, Cursor, etc.)");
+      log("INFO", "Waterloo Brightspace MCP Server running on stdio (12 tools registered)");
     } catch (error) {
       log("ERROR", "MCP Server failed to start", error);
       process.exit(1);

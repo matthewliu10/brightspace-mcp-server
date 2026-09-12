@@ -31,14 +31,11 @@ describe("server.json", () => {
       (v: { name: string }) => v.name
     );
     for (const expected of [
-      "D2L_BASE_URL",
       "D2L_SESSION_DIR",
-      "D2L_HEADLESS",
       "D2L_TOKEN_TTL",
       "D2L_INCLUDE_COURSES",
       "D2L_EXCLUDE_COURSES",
       "D2L_ACTIVE_ONLY",
-      "D2L_NO_UPDATE_CHECK",
     ]) {
       expect(names).toContain(expected);
     }

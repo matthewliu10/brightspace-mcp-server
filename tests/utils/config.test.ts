@@ -17,7 +17,7 @@ describe("resolved authentication configuration", () => {
   });
   afterEach(() => vi.unstubAllEnvs());
 
-  it("loads .env before deriving the account path inherited by the auth child", async () => {
+  it("uses Waterloo LEARN and visible auth while deriving the account path", async () => {
     const root = path.resolve("fixture-sessions");
     fake.dotenv.mockImplementation(() => {
       vi.stubEnv("D2L_BASE_URL", "https://school.example/path");
@@ -27,18 +27,21 @@ describe("resolved authentication configuration", () => {
     });
     const config = await loadConfig();
     expect(config).toMatchObject({
-      baseUrl: "https://school.example", username: "alice", password: "native-password",
-      sessionRoot: root, sessionDir: accountSessionDirectory(root, "https://school.example", "alice"), headless: false,
+      baseUrl: "https://learn.uwaterloo.ca", username: "alice", password: undefined,
+      sessionRoot: root, sessionDir: accountSessionDirectory(root, "https://learn.uwaterloo.ca", "alice"), headless: false,
     });
     expect(fake.dotenv).toHaveBeenCalledWith({ quiet: true });
-    expect(fake.password).toHaveBeenCalledWith("https://school.example", "alice", null);
+    expect(fake.password).not.toHaveBeenCalled();
     expect(fake.migrate).toHaveBeenCalledWith(root);
     expect(config.legacyBrowserStateMigrated).toBe(true);
   });
 
-  it("rejects credential-bearing URLs before accessing native storage", async () => {
+  it("ignores credential-bearing URL overrides before accessing native storage", async () => {
     vi.stubEnv("D2L_BASE_URL", "https://alice:secret@school.example");
-    await expect(loadConfig()).rejects.toThrow("without embedded credentials");
+    await expect(loadConfig()).resolves.toMatchObject({
+      baseUrl: "https://learn.uwaterloo.ca",
+      password: undefined,
+    });
     expect(fake.password).not.toHaveBeenCalled();
   });
 });
