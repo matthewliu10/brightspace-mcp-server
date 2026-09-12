@@ -2,13 +2,13 @@ name: CI
 
 on:
   pull_request:
+  push:
+    branches: [main]
   workflow_call:
 
 jobs:
   test:
-    # Windows and macOS are not decoration here: the setup wizard wraps npx in
-    # cmd /c only on Windows, and the config and session stores skip file modes
-    # there. None of that was exercised by anything before this workflow.
+    # Exercise local session and file handling across supported operating systems.
     strategy:
       fail-fast: false
       matrix:

@@ -1,5 +1,5 @@
 /**
- * Purdue Brightspace MCP Server
+ * Waterloo LEARN MCP Server
  * Copyright (c) 2026 Rohan Muppa. All rights reserved.
  * Licensed under MIT — see LICENSE file for details.
  */
@@ -163,7 +163,7 @@ export function validateContentId(id: unknown): number {
  * Prevents SSRF attacks via user-controlled URLs.
  *
  * @param url - URL to validate
- * @param expectedBaseUrl - Expected D2L base URL (e.g., "https://purdue.brightspace.com")
+ * @param expectedBaseUrl - Expected D2L base URL (e.g., "https://learn.uwaterloo.ca")
  * @throws Error if URL doesn't match expected base
  */
 export function validateBaseUrl(url: string, expectedBaseUrl: string): void {

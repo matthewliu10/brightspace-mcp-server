@@ -2,12 +2,12 @@ import * as fs from "node:fs/promises";
 import * as path from "node:path";
 import { randomUUID } from "node:crypto";
 
-export const MFA_COOLDOWN_MS = 4 * 60 * 60 * 1000;
+import { LOGIN_RETRY_COOLDOWN_MS } from "./auth-policy.js";
 
 export class AuthenticationCooldownError extends Error {
   readonly code = "AUTH_COOLDOWN";
   constructor(public readonly retryAt: number) {
-    super(`A previous MFA attempt failed. Automatic login resumes at ${new Date(retryAt).toISOString()}. Run brightspace-auth to retry now.`);
+    super(`A previous Waterloo login was interrupted. Automatic login resumes at ${new Date(retryAt).toISOString()}. Run npm run auth in the local fork to retry now.`);
     this.name = "AuthenticationCooldownError";
   }
 }
@@ -31,8 +31,8 @@ export class AuthCooldown {
     if (typeof status.retryAt === "number" && status.retryAt > Date.now()) throw new AuthenticationCooldownError(status.retryAt);
   }
 
-  async recordMfaFailure(): Promise<void> {
-    await this.write({ retryAt: Date.now() + MFA_COOLDOWN_MS });
+  async recordLoginFailure(): Promise<void> {
+    await this.write({ retryAt: Date.now() + LOGIN_RETRY_COOLDOWN_MS });
   }
 
   async clear(): Promise<void> {

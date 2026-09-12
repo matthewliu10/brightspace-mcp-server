@@ -1,5 +1,5 @@
 /**
- * Purdue Brightspace MCP Server
+ * Waterloo LEARN MCP Server
  * Copyright (c) 2026 Rohan Muppa. All rights reserved.
  * Licensed under MIT — see LICENSE file for details.
  */
@@ -57,7 +57,7 @@ export function sanitizeError(error: unknown): CallToolResult {
     if (error.status === 401) {
       return errorResponse(
         "Authentication expired. Auto-reauthentication was attempted but failed. " +
-        "Please run `brightspace-auth` manually in your terminal, then try again."
+        "Please run `npm run auth` from the local Waterloo LEARN checkout, then try again."
       );
     }
     if (error.status === 403) {

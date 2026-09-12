@@ -223,7 +223,7 @@ describe("D2LApiClient", () => {
   });
 
   describe("get() - User-Agent header", () => {
-    it("should identify BrightspaceMCP in authenticated requests", async () => {
+    it("should identify WaterlooLearnMCP in authenticated requests", async () => {
       const client = new D2LApiClient({
         baseUrl: "https://purdue.brightspace.com",
         tokenManager: mockTokenManager,
@@ -257,7 +257,7 @@ describe("D2LApiClient", () => {
         "https://purdue.brightspace.com/d2l/api/lp/1.56/users/whoami",
         expect.objectContaining({
           headers: expect.objectContaining({
-            "User-Agent": expect.stringContaining("BrightspaceMCP"),
+            "User-Agent": expect.stringContaining("WaterlooLearnMCP"),
           }),
         }),
       );

@@ -1,10 +1,9 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import * as path from "node:path";
 
-const fake = vi.hoisted(() => ({ dotenv: vi.fn(), password: vi.fn(), migrate: vi.fn() }));
+const fake = vi.hoisted(() => ({ dotenv: vi.fn(), migrate: vi.fn() }));
 vi.mock("dotenv", () => ({ default: { config: fake.dotenv } }));
 vi.mock("../../src/utils/config-store.js", () => ({ configStoreExists: () => false, loadConfigStore: vi.fn() }));
-vi.mock("../../src/utils/secure-config.js", () => ({ resolveStoredPassword: fake.password }));
 vi.mock("../../src/auth/legacy-state.js", () => ({ migrateLegacyState: fake.migrate }));
 import { accountSessionDirectory, loadConfig } from "../../src/utils/config.js";
 
@@ -12,7 +11,6 @@ describe("resolved authentication configuration", () => {
   beforeEach(() => {
     vi.resetAllMocks();
     for (const key of Object.keys(process.env).filter(key => key.startsWith("D2L_"))) vi.stubEnv(key, undefined);
-    fake.password.mockResolvedValue("native-password");
     fake.migrate.mockResolvedValue({ tokenState: "absent", browserState: "encrypted" });
   });
   afterEach(() => vi.unstubAllEnvs());
@@ -23,25 +21,26 @@ describe("resolved authentication configuration", () => {
       vi.stubEnv("D2L_BASE_URL", "https://school.example/path");
       vi.stubEnv("D2L_USERNAME", "alice");
       vi.stubEnv("D2L_SESSION_DIR", root);
-      vi.stubEnv("D2L_HEADLESS", "false");
+      vi.stubEnv("D2L_HEADLESS", "true");
+      vi.stubEnv("D2L_PASSWORD", "ignored");
     });
     const config = await loadConfig();
     expect(config).toMatchObject({
-      baseUrl: "https://learn.uwaterloo.ca", username: "alice", password: undefined,
-      sessionRoot: root, sessionDir: accountSessionDirectory(root, "https://learn.uwaterloo.ca", "alice"), headless: false,
+      baseUrl: "https://learn.uwaterloo.ca", username: "alice",
+      sessionRoot: root, sessionDir: accountSessionDirectory(root, "https://learn.uwaterloo.ca", "alice"),
     });
     expect(fake.dotenv).toHaveBeenCalledWith({ quiet: true });
-    expect(fake.password).not.toHaveBeenCalled();
     expect(fake.migrate).toHaveBeenCalledWith(root);
     expect(config.legacyBrowserStateMigrated).toBe(true);
+    expect(config).not.toHaveProperty("password");
+    expect(config).not.toHaveProperty("headless");
+    expect(config).not.toHaveProperty("campus");
   });
 
   it("ignores credential-bearing URL overrides before accessing native storage", async () => {
     vi.stubEnv("D2L_BASE_URL", "https://alice:secret@school.example");
     await expect(loadConfig()).resolves.toMatchObject({
       baseUrl: "https://learn.uwaterloo.ca",
-      password: undefined,
     });
-    expect(fake.password).not.toHaveBeenCalled();
   });
 });

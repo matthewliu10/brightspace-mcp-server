@@ -31,8 +31,6 @@ export async function loadConfig(): Promise<AppConfig> {
       ? expandTilde(store.sessionDir)
       : path.join(os.homedir(), ".d2l-session");
 
-  const headless = false;
-
   // Resolve tokenTtl: env > store > default (3600)
   const tokenTtl = process.env.D2L_TOKEN_TTL
     ? parseInt(process.env.D2L_TOKEN_TTL, 10)
@@ -70,10 +68,7 @@ export async function loadConfig(): Promise<AppConfig> {
     sessionRoot,
     legacyBrowserStateMigrated: legacyMigration?.browserState === "encrypted",
     tokenTtl,
-    headless,
     username,
-    password: undefined,
-    campus: process.env.D2L_CAMPUS || store?.campus,
     courseFilter: {
       includeCourseIds,
       excludeCourseIds,

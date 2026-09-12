@@ -1,5 +1,5 @@
 /**
- * Purdue Brightspace MCP Server
+ * Waterloo LEARN MCP Server
  * Copyright (c) 2026 Rohan Muppa. All rights reserved.
  * Licensed under MIT — see LICENSE file for details.
  */
@@ -226,7 +226,7 @@ export class D2LApiClient {
       }
       log("WARN", "Auto-reauthentication did not produce a valid token");
     }
-    throw new ApiError(401, path, "Session expired. Please re-authenticate via brightspace-auth.");
+    throw new ApiError(401, path, "Session expired. Please run npm run auth from the local Waterloo LEARN checkout.");
   }
 
   /**
@@ -290,7 +290,7 @@ export class D2LApiClient {
           throw new ApiError(
             401,
             path,
-            "Session expired. Please re-authenticate via brightspace-auth.",
+            "Session expired. Please run npm run auth from the local Waterloo LEARN checkout.",
           );
         }
         throw new ApiError(
@@ -386,7 +386,7 @@ export class D2LApiClient {
           throw new ApiError(
             401,
             path,
-            "Session expired. Please re-authenticate via brightspace-auth.",
+            "Session expired. Please run npm run auth from the local Waterloo LEARN checkout.",
           );
         }
         // A legitimate HTML page: hand back an equivalent response with the
@@ -426,7 +426,7 @@ export class D2LApiClient {
   private buildAuthHeaders(token: TokenData): Record<string, string> {
     const headers: Record<string, string> = {
       "User-Agent":
-        "BrightspaceMCP/1.0 (Rohan Muppa; github.com/rohanmuppa/brightspace-mcp-server)",
+        "WaterlooLearnMCP/2.0 (github.com/matthewliu10/brightspace-mcp-server)",
     };
 
     // Auto-detect cookie vs Bearer auth based on "cookie:" prefix

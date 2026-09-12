@@ -66,7 +66,7 @@ describe("mintAccessToken", () => {
     expect(headers["cookie"]).toBe(COOKIE_HEADER);
     expect(headers["x-csrf-token"]).toBe(CSRF_TOKEN);
     expect(headers["content-type"]).toBe("application/x-www-form-urlencoded");
-    expect(headers["User-Agent"]).toContain("BrightspaceMCP");
+    expect(headers["User-Agent"]).toContain("WaterlooLearnMCP");
   });
 
   it("classifies the HTTP 200 expiry stub as sessionExpired", async () => {

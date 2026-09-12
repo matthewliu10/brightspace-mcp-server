@@ -101,3 +101,24 @@ describe("get_roster truncation", () => {
     expect(payload.truncated).toBe(true);
   });
 });
+
+describe("Waterloo teaching roles", () => {
+  it("uses returned role names instead of institution-specific IDs", async () => {
+    const { call, requested } = setup(() => ({ Objects: [
+      { ...user("prof"), RoleId: 501, ClasslistRoleDisplayName: "Instructor" },
+      { ...user("assistant"), RoleId: 502, ClasslistRoleDisplayName: "Teaching Assistant" },
+      { ...user("learner"), RoleId: 109, ClasslistRoleDisplayName: "Student" },
+      { ...user("unknown"), ClasslistRoleDisplayName: null },
+    ], Next: null }));
+    const payload = parse(await call({ courseId: COURSE_ID }));
+    expect(payload.users.map((entry: { name: string }) => entry.name)).toEqual(["prof", "assistant"]);
+    expect(payload.roleFilter).toContain("display names");
+    expect(requested.every(path => !path.includes("roleId="))).toBe(true);
+  });
+
+  it("reports access errors instead of returning an empty staff list", async () => {
+    const { call } = setup(() => { throw new Error("classlist unavailable"); });
+    const response = await call({ courseId: COURSE_ID });
+    expect(response.isError).toBe(true);
+  });
+});

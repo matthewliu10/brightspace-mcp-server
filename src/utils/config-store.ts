@@ -13,11 +13,13 @@ import { writeFileAtomicSync } from "./atomic-write.js";
 export interface ConfigStoreData {
   baseUrl?: string;
   username?: string;
-  /** Read only for migration from v1. Never written by saveConfigStore. */
+  /** Legacy input only; discarded by setup. Never written by saveConfigStore. */
   password?: string;
+  /** Legacy input only; not used for Waterloo login. */
   campus?: string;
   sessionDir?: string;
   tokenTtl?: number;
+  /** Legacy input only; Waterloo login always opens a browser. */
   headless?: boolean;
   includeCourses?: number[];
   excludeCourses?: number[];
@@ -38,7 +40,7 @@ export function loadConfigStore(): ConfigStoreData {
 
 export function saveConfigStore(config: ConfigStoreData): void {
   if (config.password !== undefined) {
-    throw new Error("Passwords must be saved in the native credential store before saving configuration.");
+    throw new Error("Waterloo passwords must not be saved in configuration. Use browser login.");
   }
   const isWindows = process.platform === "win32";
   if (!fs.existsSync(CONFIG_DIR)) {

@@ -1,6 +1,5 @@
 import { describe, expect, it, vi } from "vitest";
 import * as path from "node:path";
-vi.mock("../../src/utils/secure-config.js", () => ({ resolveStoredPassword: vi.fn() }));
 import { accountSessionDirectory } from "../../src/utils/config.js";
 
 describe("account session isolation", () => {

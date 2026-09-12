@@ -5,7 +5,7 @@ import * as path from "node:path";
 import { BrowserAuth, BrowserAuthTransportError } from "../../src/auth/browser-auth.js";
 import { acquireProcessLock, AuthenticationInProgressError } from "../../src/auth/auth-lock.js";
 import { AuthCooldown, AuthenticationCooldownError } from "../../src/auth/auth-cooldown.js";
-import { MfaApprovalError, UnsupportedAuthenticationError } from "../../src/auth/sso-flow.js";
+import { InteractiveLoginError, LOGIN_RETRY_COOLDOWN_MS } from "../../src/auth/auth-policy.js";
 import type { AppConfig } from "../../src/types/index.js";
 
 const mocks = vi.hoisted(() => ({
@@ -28,7 +28,7 @@ beforeEach(async () => {
   directory = await fs.mkdtemp(path.join(os.tmpdir(), "brightspace-headless-test-"));
   const config = {
     baseUrl: "https://school.example", sessionDir: directory, tokenTtl: 3600,
-    headless: true, username: "student", password: "dummy",
+    username: "student",
     courseFilter: {},
   } as AppConfig;
   page = { on: vi.fn(), removeListener: vi.fn() };
@@ -45,10 +45,10 @@ beforeEach(async () => {
 afterEach(() => { vi.restoreAllMocks(); });
 
 describe("BrowserAuth lifecycle", () => {
-  it("launches an ephemeral headless context and restores state without checking its age", async () => {
+  it("launches an ephemeral visible context and restores state without checking its age", async () => {
     const onAuthenticated = vi.fn(async () => {});
     await expect(auth.authenticate({ onAuthenticated })).resolves.toEqual(token);
-    expect(mocks.launch).toHaveBeenCalledWith(expect.objectContaining({ headless: true, timeout: 60000 }));
+    expect(mocks.launch).toHaveBeenCalledWith(expect.objectContaining({ headless: false, timeout: 60000 }));
     expect(browser.newContext).toHaveBeenCalledWith(expect.objectContaining({ storageState: await mocks.load.mock.results[0].value }));
     expect(context.storageState).toHaveBeenCalledWith();
     expect(mocks.save).toHaveBeenCalledWith({ cookies: [], origins: [] });
@@ -56,12 +56,6 @@ describe("BrowserAuth lifecycle", () => {
     expect(browser.close).toHaveBeenCalledOnce();
     expect(context.close).toHaveBeenCalledOnce();
     expect(await fs.readdir(directory)).not.toContain("browser-data");
-  });
-
-  it("can launch a visible browser when configured for manual auth", async () => {
-    (auth as any).config.headless = false;
-    await expect(auth.authenticate()).resolves.toEqual(token);
-    expect(mocks.launch).toHaveBeenCalledWith(expect.objectContaining({ headless: false, timeout: 60000 }));
   });
 
   it("holds the process lock until token persistence finishes", async () => {
@@ -109,68 +103,35 @@ describe("BrowserAuth lifecycle", () => {
   });
 });
 
-describe("headless credential login and cooldown", () => {
-  beforeEach(() => {
-    (auth as any).navigateAndLogin.mockRestore();
-    page.goto = vi.fn(async () => null);
-    page.locator = vi.fn((selector: string) => ({ first: () => ({ isVisible: async () => selector === "input[type=email]" }) }));
-    (auth as any).ssoFlow = { hasCredentials: () => true, login: vi.fn(async () => true) };
-    vi.spyOn(auth as any, "awaitSilentSSO").mockResolvedValue(false);
-    vi.spyOn(auth as any, "hasLiveSession").mockResolvedValue(true);
-  });
-
-  it("records cooldown only after an actual failed MFA challenge", async () => {
-    (auth as any).ssoFlow.login.mockRejectedValue(new MfaApprovalError());
-    await expect(auth.authenticate()).rejects.toBeInstanceOf(MfaApprovalError);
-    await expect(new AuthCooldown(directory).assertAllowed()).rejects.toBeInstanceOf(AuthenticationCooldownError);
-  });
-
-  it("does not record cooldown for unsupported forms or network errors", async () => {
-    (auth as any).ssoFlow.login.mockRejectedValue(new UnsupportedAuthenticationError("unsupported"));
-    await expect(auth.authenticate()).rejects.toThrow("unsupported");
-    await expect(new AuthCooldown(directory).assertAllowed()).resolves.toBeUndefined();
-    page.goto.mockRejectedValue(new Error("net::ERR_NAME_NOT_RESOLVED"));
-    await expect(auth.authenticate()).rejects.toBeInstanceOf(BrowserAuthTransportError);
-    expect((auth as any).ssoFlow.login).toHaveBeenCalledOnce();
-  });
-
-  it("blocks every automatic browser attempt during cooldown before loading or launching", async () => {
-    await new AuthCooldown(directory).recordMfaFailure();
+describe("Waterloo interactive login cooldown", () => {
+  it.each(["closed", "timed out"])("pauses automatic retries after login %s", async (reason) => {
+    (auth as any).navigateAndLogin.mockRejectedValue(new InteractiveLoginError(reason));
+    await expect(auth.authenticate({ automatic: true })).rejects.toThrow(reason);
     await expect(auth.authenticate({ automatic: true })).rejects.toBeInstanceOf(AuthenticationCooldownError);
-    expect((auth as any).ssoFlow.login).not.toHaveBeenCalled();
-    expect(mocks.load).not.toHaveBeenCalled();
-    expect(mocks.launch).not.toHaveBeenCalled();
-    expect(page.goto).not.toHaveBeenCalled();
-    (auth as any).awaitSilentSSO.mockResolvedValue(true);
-    await expect(auth.authenticate({ automatic: true })).rejects.toBeInstanceOf(AuthenticationCooldownError);
-    expect((auth as any).awaitSilentSSO).not.toHaveBeenCalled();
-    expect(mocks.launch).not.toHaveBeenCalled();
+    expect(mocks.launch).toHaveBeenCalledOnce();
+    const status = JSON.parse(await fs.readFile(path.join(directory, "auth-status.json"), "utf8"));
+    expect(status.retryAt - Date.now()).toBeGreaterThan(LOGIN_RETRY_COOLDOWN_MS - 2000);
+    expect(status.retryAt - Date.now()).toBeLessThanOrEqual(LOGIN_RETRY_COOLDOWN_MS);
   });
 
-  it("allows explicit authentication immediately during cooldown", async () => {
-    await new AuthCooldown(directory).recordMfaFailure();
-    await expect(auth.authenticate()).resolves.toEqual(token);
-    expect((auth as any).ssoFlow.login).toHaveBeenCalledOnce();
+  it("does not record a login cooldown for network failures", async () => {
+    (auth as any).navigateAndLogin.mockRejectedValue(new BrowserAuthTransportError("offline"));
+    await expect(auth.authenticate()).rejects.toThrow("offline");
     await expect(new AuthCooldown(directory).assertAllowed()).resolves.toBeUndefined();
   });
 
-  it("rejects incomplete saved credentials without waiting for manual input", async () => {
-    (auth as any).ssoFlow.hasCredentials = () => false;
-    await expect(auth.authenticate()).rejects.toBeInstanceOf(UnsupportedAuthenticationError);
-    expect((auth as any).ssoFlow.login).not.toHaveBeenCalled();
-  });
-
-  it("can approve an existing Microsoft MFA challenge without retyping credentials", async () => {
-    (auth as any).ssoFlow.hasCredentials = () => false;
-    page.locator = vi.fn(() => ({ first: () => ({ isVisible: async () => true }) }));
+  it("allows explicit login during cooldown and clears it on success", async () => {
+    await new AuthCooldown(directory).recordLoginFailure();
+    await expect(auth.authenticate({ automatic: true })).rejects.toBeInstanceOf(AuthenticationCooldownError);
+    expect(mocks.launch).not.toHaveBeenCalled();
     await expect(auth.authenticate()).resolves.toEqual(token);
-    expect((auth as any).ssoFlow.login).toHaveBeenCalledOnce();
+    await expect(new AuthCooldown(directory).assertAllowed()).resolves.toBeUndefined();
   });
 
-  it("does not attempt login when Brightspace returns a server outage", async () => {
-    page.goto.mockResolvedValue({ status: () => 503 });
-    await expect(auth.authenticate()).rejects.toBeInstanceOf(BrowserAuthTransportError);
-    expect((auth as any).ssoFlow.login).not.toHaveBeenCalled();
+  it("allows automatic login after the cooldown expires", async () => {
+    await new AuthCooldown(directory).recordLoginFailure();
+    vi.spyOn(Date, "now").mockReturnValue(Date.now() + LOGIN_RETRY_COOLDOWN_MS + 1);
+    await expect(auth.authenticate({ automatic: true })).resolves.toEqual(token);
   });
 });
 

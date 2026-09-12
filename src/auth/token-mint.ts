@@ -1,5 +1,5 @@
 /**
- * Purdue Brightspace MCP Server
+ * Waterloo LEARN MCP Server
  * Copyright (c) 2026 Rohan Muppa. All rights reserved.
  * Licensed under MIT: see LICENSE file for details.
  */
@@ -8,7 +8,7 @@ import { log } from "../utils/logger.js";
 
 /**
  * The marker in the HTML stub a dead session gets instead of a token payload.
- * Measured against purdue.brightspace.com: an expired session answers HTTP 200
+ * An expired Brightspace session can answer HTTP 200
  * carrying a script that redirects to /d2l/login?sessionExpired=1. There is no
  * 401 on this path, so the marker, not the status, is the only honest signal.
  */
@@ -16,7 +16,7 @@ const EXPIRED_MARKER = "/d2l/login?sessionExpired=1";
 
 /** Same identity the API client sends, see buildAuthHeaders in api/client.ts. */
 const USER_AGENT =
-  "BrightspaceMCP/1.0 (Rohan Muppa; github.com/rohanmuppa/brightspace-mcp-server)";
+  "WaterlooLearnMCP/2.0 (github.com/matthewliu10/brightspace-mcp-server)";
 
 const DEFAULT_TIMEOUT_MS = 15000;
 

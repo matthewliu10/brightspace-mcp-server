@@ -1,23 +1,8 @@
 import { describe, it, expect, vi } from "vitest";
 import { randomUUID } from "node:crypto";
-import { assertNativeCredentialStoreAvailable, getStoredPassword, setStoredPassword, NativeCredentialStoreError, nativeCredentialBackend } from "../../src/auth/credential-store.js";
-import { MemoryCredentialBackend } from "./secure-store-fixtures.js";
+import { assertNativeCredentialStoreAvailable, nativeCredentialBackend } from "../../src/auth/credential-store.js";
 
 describe("Credential store", () => {
-  it("separates credentials by tenant and username while normalizing URL origins", async () => {
-    const backend = new MemoryCredentialBackend();
-    await setStoredPassword("https://school.example/", "alice", "dummy-password", backend);
-    expect(await getStoredPassword("https://school.example/d2l/home", "alice", backend)).toBe("dummy-password");
-    expect(await getStoredPassword("https://other.example/", "alice", backend)).toBeNull();
-    expect(await getStoredPassword("https://school.example/", "bob", backend)).toBeNull();
-  });
-
-  it("fails verification when the native store does not retain a password", async () => {
-    const backend = new MemoryCredentialBackend();
-    backend.setPassword = async () => {};
-    await expect(setStoredPassword("https://school.example", "alice", "dummy-password", backend)).rejects.toBeInstanceOf(NativeCredentialStoreError);
-  });
-
   it("requires a real Secret Service on Linux", async () => {
     const missing = vi.fn(async () => { throw new Error("service absent"); });
     await expect(assertNativeCredentialStoreAvailable("linux", missing)).rejects.toThrow("Secret Service");

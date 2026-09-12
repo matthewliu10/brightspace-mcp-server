@@ -156,23 +156,6 @@ export const nativeCredentialBackend: CredentialBackend = {
   },
 };
 
-function passwordAccount(baseUrl: string, username: string): string {
-  const identity = JSON.stringify([new URL(baseUrl).origin, username]);
-  return `password:${createHash("sha256").update(identity).digest("hex")}`;
-}
-
-export async function getStoredPassword(baseUrl: string, username: string, backend: CredentialBackend = nativeCredentialBackend): Promise<string | null> {
-  return backend.getPassword(SERVICE, passwordAccount(baseUrl, username));
-}
-
-export async function setStoredPassword(baseUrl: string, username: string, password: string, backend: CredentialBackend = nativeCredentialBackend): Promise<void> {
-  const account = passwordAccount(baseUrl, username);
-  await backend.setPassword(SERVICE, account, password);
-  if (await backend.getPassword(SERVICE, account) !== password) {
-    throw new NativeCredentialStoreError("The saved password could not be verified in the native credential store. Existing configuration was preserved.");
-  }
-}
-
 function decodeKey(value: string): Buffer {
   if (!/^[a-f0-9]{64}$/i.test(value)) {
     throw new NativeCredentialStoreError("The saved session encryption key is invalid. Restore its native credential store entry before retrying.");

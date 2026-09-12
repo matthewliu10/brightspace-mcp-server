@@ -42,7 +42,7 @@ async function main(): Promise<void> {
     process.exitCode = error instanceof NativeCredentialStoreError ? 5
       : code === "AUTH_IN_PROGRESS" ? 2
       : code === "AUTH_COOLDOWN" ? 3
-      : code === "AUTH_UNSUPPORTED" ? 4
+      : code === "AUTH_INTERACTIVE" ? 4
       : code === "AUTH_TRANSPORT" ? 6 : 1;
     console.error("\nAuthentication failed:", error instanceof Error ? error.message : "Unknown authentication error");
     console.error("Run `node build/setup.js` to update saved local config.");

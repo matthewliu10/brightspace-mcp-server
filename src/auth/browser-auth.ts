@@ -10,27 +10,14 @@ import { readFileSync, accessSync } from "node:fs";
 import type { AppConfig, TokenData } from "../types/index.js";
 import { BrowserAuthError } from "../utils/errors.js";
 import { log } from "../utils/logger.js";
-import { createSSOFlow, UnsupportedAuthenticationError, MfaApprovalError } from "./sso-flow.js";
-import type { SSOFlow } from "./sso-flow.js";
+import { MANUAL_LOGIN_TIMEOUT_MS, InteractiveLoginError } from "./auth-policy.js";
 import { BrowserStateStore } from "./browser-state-store.js";
 import { acquireProcessLock } from "./auth-lock.js";
 import { AuthCooldown } from "./auth-cooldown.js";
 import { mintAccessToken } from "./token-mint.js";
 
-const SILENT_SSO_TIMEOUT_MS = 30000;
-const SILENT_SSO_POLL_MS = 1000;
 const INITIAL_NAVIGATION_TIMEOUT_MS = 60000;
-const MANUAL_LOGIN_TIMEOUT_MS = 10 * 60 * 1000;
 const MANUAL_LOGIN_POLL_MS = 1000;
-const SILENT_SSO = {
-  emailFields: ["input[type=email]", "input[name=loginfmt]"],
-  credentialFields: ['input#username', 'input#userName', 'input[type="password"]'],
-  mfaChallenges: ["#idRichContext_DisplaySign", "#idDiv_SAOTCAS_Title", "#idDiv_SAOTCC_Title"],
-  campusSaml: 'a[href*="/d2l/lp/auth/saml/initiate-login"]',
-  kmsiCheckbox: "#KmsiCheckboxField",
-  kmsiTitle: "Stay signed in?",
-  kmsiSubmit: "#idSIButton9",
-} as const;
 
 export class BrowserAuthTransportError extends Error {
   readonly code = "AUTH_TRANSPORT";
@@ -48,13 +35,11 @@ export interface AuthenticateOptions {
 
 export class BrowserAuth {
   private config: AppConfig;
-  private ssoFlow: SSOFlow;
   private readonly stateStore: BrowserStateStore;
   private readonly cooldown: AuthCooldown;
 
   constructor(config: AppConfig) {
     this.config = config;
-    this.ssoFlow = createSSOFlow(config);
     this.stateStore = new BrowserStateStore(config.sessionDir);
     this.cooldown = new AuthCooldown(config.sessionDir);
   }
@@ -81,7 +66,13 @@ export class BrowserAuth {
       // automatic browser attempts during cooldown; HTTP token refresh runs
       // independently before this entrypoint and remains available.
       if (options.automatic) await this.cooldown.assertAllowed();
-      const token = await this.attemptAuthentication();
+      let token: TokenData;
+      try {
+        token = await this.attemptAuthentication();
+      } catch (error) {
+        if (error instanceof InteractiveLoginError) await this.cooldown.recordLoginFailure();
+        throw error;
+      }
       await options.onAuthenticated?.(token);
       await this.cooldown.clear();
       return token;
@@ -106,7 +97,7 @@ export class BrowserAuth {
       const args = ["--disable-blink-features=AutomationControlled"];
       if (BrowserAuth.isWSLOrDocker()) args.push("--no-sandbox", "--disable-setuid-sandbox");
       // Use Playwright's own timeout, which cleans up an unsuccessful launch.
-      browser = await chromium.launch({ headless: this.config.headless, timeout: 60000, args });
+      browser = await chromium.launch({ headless: false, timeout: 60000, args });
       process.once("SIGINT", closeOnSignal);
       process.once("SIGTERM", closeOnSignal);
       context = await browser.newContext({ viewport: { width: 1280, height: 720 }, storageState: state });
@@ -122,7 +113,7 @@ export class BrowserAuth {
       await this.navigateAndLogin(page);
       // Persist the verified browser state before token acquisition. Token
       // minting can fail independently, and a temporary outage must not throw
-      // away newly renewed Entra or Brightspace cookies.
+      // away newly renewed Waterloo SSO or LEARN cookies.
       await this.stateStore.save(await context.storageState());
       const material = await this.harvestSessionMaterial(page, context);
       let token: TokenData | null = null;
@@ -142,7 +133,7 @@ export class BrowserAuth {
       }
       if (!token) throw new BrowserAuthError("Brightspace did not provide a usable API token. Saved SSO cookies have been preserved.", "token_extraction");
       if (interrupted) throw new BrowserAuthError("Authentication interrupted", "interrupted");
-      log("INFO", `${this.config.headless ? "Headless" : "Visible"} authentication complete`);
+      log("INFO", "Waterloo LEARN authentication complete");
       return { ...token, ...material, tenantOrigin: new URL(this.config.baseUrl).origin };
     } finally {
       process.removeListener("SIGINT", closeOnSignal);
@@ -246,9 +237,8 @@ export class BrowserAuth {
     throw new BrowserAuthTransportError(`Token validation temporarily failed with HTTP ${response.status}.`);
   }
 
-  /** Restore first, and only attempt credentials after a real sign-in is needed. */
+  /** Restore saved state, then let the user complete Waterloo sign-in if needed. */
   private async navigateAndLogin(page: Page): Promise<boolean> {
-    let navigationError: unknown;
     let response;
     try {
       response = await page.goto(`${this.config.baseUrl}/d2l/home`, {
@@ -256,49 +246,21 @@ export class BrowserAuth {
         timeout: INITIAL_NAVIGATION_TIMEOUT_MS,
       });
     } catch (error) {
-      // Brightspace Bar tolerates a navigation timeout because SAML may keep
+      // SAML may keep
       // redirecting after Playwright stops waiting. Continue with the same
       // bounded page-state poll, but never infer that credentials are needed
       // from the navigation failure itself.
+      if (page.isClosed()) throw new InteractiveLoginError("Waterloo login window was closed. Run npm run auth to retry.");
       const message = error instanceof Error ? error.message : String(error);
       if (!/timeout|ERR_ABORTED|navigation.*interrupted/i.test(message)) {
         throw new BrowserAuthTransportError("Could not reach Brightspace. Retry when the connection is available.", { cause: error });
       }
-      navigationError = error;
       log("WARN", "Initial Brightspace navigation did not settle; checking the current SSO page");
     }
     if (response && (response.status() >= 500 || response.status() === 429)) {
       throw new BrowserAuthTransportError(`Brightspace temporarily returned HTTP ${response.status()}. Saved state is preserved.`);
     }
-    if (!this.config.headless) {
-      return await this.waitForManualLogin(page);
-    }
-    if (await this.awaitSilentSSO(page)) {
-      log("INFO", "Saved session is active");
-      return true;
-    }
-    const pendingMfa = await this.isAnyOnScreen(page, SILENT_SSO.mfaChallenges);
-    if (!pendingMfa && !await this.hasCredentialPrompt(page)) {
-      throw new BrowserAuthTransportError(
-        "The sign-in page has not settled on a supported login challenge. Retry shortly; saved state is preserved.",
-        navigationError === undefined ? undefined : { cause: navigationError }
-      );
-    }
-    if (!this.ssoFlow.hasCredentials() && !pendingMfa) {
-      throw new UnsupportedAuthenticationError("Headless sign-in requires saved credentials. Run brightspace-mcp-server setup.");
-    }
-    try {
-      if (!await this.ssoFlow.login(page)) {
-        throw new UnsupportedAuthenticationError("The identity provider could not complete headless sign-in.");
-      }
-    } catch (error) {
-      if (error instanceof MfaApprovalError) await this.cooldown.recordMfaFailure();
-      throw error;
-    }
-    if (!await this.hasLiveSession(page)) {
-      throw new BrowserAuthError("Sign-in did not produce a verified Brightspace session.", "session_validation");
-    }
-    return false;
+    return await this.waitForManualLogin(page);
   }
 
   /**
@@ -307,6 +269,7 @@ export class BrowserAuth {
    * the existing Brightspace cookie/token harvesting after login succeeds.
    */
   private async waitForManualLogin(page: Page): Promise<boolean> {
+    if (page.isClosed()) throw new InteractiveLoginError("Waterloo login window was closed. Run npm run auth to retry.");
     if (await this.hasLiveSession(page)) {
       log("INFO", "Saved session is active");
       return true;
@@ -318,74 +281,20 @@ export class BrowserAuth {
 
     const deadline = Date.now() + MANUAL_LOGIN_TIMEOUT_MS;
     while (Date.now() < deadline) {
+      if (page.isClosed()) throw new InteractiveLoginError("Waterloo login window was closed. Run npm run auth to retry.");
       if (await this.hasLiveSession(page)) {
-        log("INFO", "Visible login successful - verified Brightspace home");
+        log("INFO", "Waterloo login successful - verified LEARN home");
         return false;
       }
-      await page.waitForTimeout(MANUAL_LOGIN_POLL_MS);
+      try {
+        await page.waitForTimeout(MANUAL_LOGIN_POLL_MS);
+      } catch (error) {
+        if (page.isClosed()) throw new InteractiveLoginError("Waterloo login window was closed. Run npm run auth to retry.");
+        throw error;
+      }
     }
 
-    throw new UnsupportedAuthenticationError("Visible sign-in did not reach Brightspace within 10 minutes.");
-  }
-
-  /**
-   * Give the SSO chain a bounded window to finish with no human input.
-   * Returns true only when the session proves itself live.
-   */
-  private async awaitSilentSSO(page: Page): Promise<boolean> {
-    const deadline = Date.now() + SILENT_SSO_TIMEOUT_MS;
-    let accountHintAttempted = false;
-    let passwordPromptPolls = 0;
-    do {
-      if (await this.hasLiveSession(page)) return true;
-
-      // Only a visible supported challenge justifies entering credentials or
-      // waiting for MFA. A stalled redirect is not proof of session expiry.
-      if (await this.isAnyOnScreen(page, SILENT_SSO.emailFields)) {
-        if (!accountHintAttempted && this.ssoFlow.identifyAccount) {
-          accountHintAttempted = true;
-          if (await this.ssoFlow.identifyAccount(page)) {
-            log("DEBUG", "Submitted the configured account name to resume saved SSO");
-            await page.waitForTimeout(SILENT_SSO_POLL_MS);
-            continue;
-          }
-        }
-        log("INFO", "The identity provider requires an account login");
-        return false;
-      }
-      if (await this.isAnyOnScreen(page, SILENT_SSO.mfaChallenges)) {
-        log("INFO", "The identity provider requires a login challenge");
-        return false;
-      }
-      if (await this.isAnyOnScreen(page, SILENT_SSO.credentialFields)) {
-        passwordPromptPolls += 1;
-        // Entra can briefly expose a password-shaped control while its email
-        // view initializes. Brightspace Bar polls the evolving page instead of
-        // concluding from that first transient snapshot.
-        if (passwordPromptPolls >= 2) {
-          log("INFO", "The identity provider requires a login challenge");
-          return false;
-        }
-        await page.waitForTimeout(SILENT_SSO_POLL_MS);
-        continue;
-      }
-      passwordPromptPolls = 0;
-
-      try {
-        await this.clickSilentSurfaces(page);
-        await page.waitForTimeout(SILENT_SSO_POLL_MS);
-      } catch (error) {
-        if (error instanceof BrowserAuthError || error instanceof BrowserAuthTransportError) throw error;
-        throw new BrowserAuthTransportError("Silent sign-in could not reach the identity provider. Saved state is preserved.", { cause: error });
-      }
-    } while (Date.now() < deadline);
-
-    throw new BrowserAuthTransportError("Silent sign-in did not reach Brightspace or a supported login challenge within 30 seconds. Retry shortly; saved state is preserved.");
-  }
-
-  private async hasCredentialPrompt(page: Page): Promise<boolean> {
-    return await this.isAnyOnScreen(page, SILENT_SSO.emailFields) ||
-      await this.isAnyOnScreen(page, SILENT_SSO.credentialFields);
+    throw new InteractiveLoginError("Waterloo sign-in did not reach LEARN within 10 minutes. Run npm run auth to retry.");
   }
 
   /**
@@ -412,71 +321,11 @@ export class BrowserAuth {
         return d2l !== undefined && Boolean(d2l.LP);
       });
     } catch (error) {
+      if (page.isClosed()) throw new InteractiveLoginError("Waterloo login window was closed. Run npm run auth to retry.");
+      // Redirects can destroy the JavaScript context between the URL check and evaluate.
+      if (/execution context.*destroyed|cannot find context/i.test(String(error))) return false;
       throw new BrowserAuthTransportError("The browser could not verify the saved Brightspace session. Saved state is preserved.", { cause: error });
     }
-  }
-
-  /**
-   * Click through the two surfaces that stand between a live Entra cookie and
-   * an authenticated D2L page. Neither involves a secret.
-   */
-  private async clickSilentSurfaces(page: Page): Promise<void> {
-    const url = page.url();
-
-    if (url.includes("/d2l/login")) {
-      // The Purdue buttons are not ordinary links. Follow the school's known
-      // SAML entry before deciding whether saved Microsoft state has expired.
-      await this.ssoFlow.prepareLogin?.(page);
-      if (!page.url().includes("/d2l/login")) return;
-      // Brightspace renders the campus buttons in a shadow DOM, which
-      // Playwright's selectors see through. A configured campus is matched by
-      // name; otherwise the selector's own SAML link is the only affordance
-      // safe to click blind, and a school that offers neither simply falls
-      // through to the SSO flow, which knows its own endpoint.
-      const campus = this.config.campus
-        ? page.getByText(this.config.campus).first()
-        : page.locator(SILENT_SSO.campusSaml).first();
-      if (await campus.isVisible().catch(() => false)) {
-        await campus.click().catch(() => {});
-        log("DEBUG", "Clicked the campus selector");
-      }
-      return;
-    }
-
-    if (!url.includes("login.microsoftonline.com")) return;
-
-    // The page must PROVE it is the "Stay signed in?" page before this click:
-    // #idSIButton9 is Microsoft's id for the primary button on EVERY sign-in
-    // page, "Next" on account name and "Sign in" on password, so clicking it
-    // unguarded submits an empty form once a second while the log claims it
-    // answered Yes. Two markers because tenant policy can hide the checkbox.
-    const onKmsiPage =
-      (await this.isOnScreen(page, SILENT_SSO.kmsiCheckbox)) ||
-      (await page.getByText(SILENT_SSO.kmsiTitle).first().isVisible().catch(() => false));
-    if (!onKmsiPage) return;
-
-    const yes = page.locator(SILENT_SSO.kmsiSubmit).first();
-    if (await yes.isVisible().catch(() => false)) {
-      await yes.click().catch(() => {});
-      log("DEBUG", 'Clicked Yes on "Stay signed in?"');
-    }
-  }
-
-  /** Visibility without the actionability wait, so a poll keeps its rhythm. */
-  private async isOnScreen(page: Page, selector: string): Promise<boolean> {
-    try {
-      return await page.locator(selector).first().isVisible();
-    } catch (error) {
-      throw new BrowserAuthTransportError("The browser could not inspect the sign-in page. Saved state is preserved.", { cause: error });
-    }
-  }
-
-  /** Check each selector independently so a hidden earlier match cannot mask a visible one. */
-  private async isAnyOnScreen(page: Page, selectors: readonly string[]): Promise<boolean> {
-    for (const selector of selectors) {
-      if (await this.isOnScreen(page, selector)) return true;
-    }
-    return false;
   }
 
   /**

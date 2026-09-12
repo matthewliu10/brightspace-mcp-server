@@ -1,35 +1,16 @@
 import { describe, it, expect, beforeEach, afterEach, vi } from "vitest";
 import { BrowserAuth, BrowserAuthTransportError } from "../../src/auth/browser-auth.js";
+import { InteractiveLoginError, MANUAL_LOGIN_TIMEOUT_MS } from "../../src/auth/auth-policy.js";
 import type { AppConfig } from "../../src/types/index.js";
 
-/**
- * Regression tests for navigateAndLogin()'s already-authenticated detection.
- *
- * The detection is a POSITIVE check, never "the URL doesn't look like a login
- * page": institutions bounce through intermediate SAML hops with a perfectly
- * live session, and the login stub sets cookies of its own. So a session counts
- * as live only when the d2lSessionVal cookie is present AND the D2L JS context
- * is reachable, and the check runs on a bounded poll so a dead D2L session with
- * a live Entra cookie can re-mint itself through the no-secret surfaces.
- */
-
-const BASE_URL = "https://brightspace.example.edu";
-
-const EMAIL_SELECTOR = "input[type=email]";
-const ALTERNATE_EMAIL_SELECTOR = "input[name=loginfmt]";
-const SAOTCC_SELECTOR = "#idDiv_SAOTCC_Title";
-const CAMPUS_SELECTOR = 'a[href*="/d2l/lp/auth/saml/initiate-login"]';
-const KMSI_CHECKBOX = "#KmsiCheckboxField";
-const KMSI_SUBMIT = "#idSIButton9";
+const BASE_URL = "https://learn.uwaterloo.ca";
 
 function makeConfig(overrides: Partial<AppConfig> = {}): AppConfig {
   return {
     baseUrl: BASE_URL,
     sessionDir: "/tmp/does-not-matter",
     tokenTtl: 3600,
-    headless: true,
     username: "student@example.edu",
-    password: "hunter2",
     courseFilter: {} as AppConfig["courseFilter"],
     ...overrides,
   };
@@ -54,8 +35,7 @@ interface FakePageOptions {
 }
 
 /**
- * Fake Page covering everything the silent-SSO poll touches: the cookie jar,
- * the D2L JS context, selector visibility, and the clicks it performs.
+ * Fake Page for Waterloo login polling; records any unintended clicks.
  */
 function makePage(options: FakePageOptions = {}) {
   const state: FakeState = {
@@ -76,6 +56,7 @@ function makePage(options: FakePageOptions = {}) {
   });
 
   const page = {
+    isClosed: vi.fn(() => false),
     goto: vi.fn(async () => null),
     url: vi.fn(() => state.url),
     waitForURL: vi.fn(async () => {
@@ -112,244 +93,74 @@ const LIVE_SESSION = {
   d2l: true,
 };
 
-describe("BrowserAuth.navigateAndLogin", () => {
+describe("Waterloo browser login", () => {
   let auth: BrowserAuth;
-  let ssoFlow: {
-    login: ReturnType<typeof vi.fn>;
-    manualLogin: ReturnType<typeof vi.fn>;
-    hasCredentials: ReturnType<typeof vi.fn>;
-  };
+  beforeEach(() => { vi.useFakeTimers(); auth = new BrowserAuth(makeConfig()); });
+  afterEach(() => { vi.useRealTimers(); });
+  const navigate = (page: unknown): Promise<boolean> => (auth as any).navigateAndLogin(page);
 
-  beforeEach(() => {
-    vi.useFakeTimers();
-    auth = new BrowserAuth(makeConfig());
-    ssoFlow = {
-      login: vi.fn(async (page: any) => {
-        page.context = () => ({ cookies: async () => LIVE_SESSION.cookies });
-        page.evaluate = async () => true;
-        page.url = () => `${BASE_URL}/d2l/home`;
-        return true;
-      }),
-      manualLogin: vi.fn(async () => true),
-      hasCredentials: vi.fn(() => true),
-    };
-    // navigateAndLogin is private; swap the SSO flow so we can assert it stays unused.
-    (auth as any).ssoFlow = ssoFlow;
-  });
-
-  afterEach(() => {
-    vi.useRealTimers();
-  });
-
-  const navigate = (page: unknown): Promise<boolean> =>
-    (auth as any).navigateAndLogin(page);
-
-  const withConfig = (overrides: Partial<AppConfig>) => {
-    (auth as any).config = makeConfig(overrides);
-  };
-
-  it("waits for an intermediate SAML hop to reach the authenticated home page", async () => {
-    const { page } = makePage({
-      url: `${BASE_URL}/d2l/lp/auth/login/samlLogin.d2l`,
-      ...LIVE_SESSION,
-      onTick: (state) => { state.url = `${BASE_URL}/d2l/home`; },
-    });
-
+  it("accepts an already authenticated LEARN home", async () => {
+    const { page } = makePage({ ...LIVE_SESSION });
     await expect(navigate(page)).resolves.toBe(true);
-    expect(ssoFlow.login).not.toHaveBeenCalled();
-    expect(ssoFlow.manualLogin).not.toHaveBeenCalled();
-    expect(page.waitForTimeout).toHaveBeenCalledOnce();
-  });
-
-  it("does not accept the login shell even when it defines D2L.LP and stale cookies", async () => {
-    const { page } = makePage({ url: `${BASE_URL}/d2l/login`, ...LIVE_SESSION });
-    await expect(navigate(page)).rejects.toBeInstanceOf(BrowserAuthTransportError);
-    expect(ssoFlow.login).not.toHaveBeenCalled();
-  });
-
-  it("returns a temporary failure when a SAML redirect remains inconclusive", async () => {
-    const { page } = makePage({
-      url: "https://sso.example.edu/idp/profile/SAML2/Redirect/SSO",
-    });
-
-    await expect(navigate(page)).rejects.toBeInstanceOf(BrowserAuthTransportError);
-    expect(ssoFlow.login).not.toHaveBeenCalled();
-    // The whole 30s budget was spent before giving up.
-    expect(page.waitForTimeout).toHaveBeenCalledTimes(30);
-  });
-
-  it("short-circuits without waiting when the first check finds a live session", async () => {
-    const { page, clicks } = makePage({ url: `${BASE_URL}/d2l/home`, ...LIVE_SESSION });
-
-    await expect(navigate(page)).resolves.toBe(true);
-    expect(page.waitForURL).not.toHaveBeenCalled();
     expect(page.waitForTimeout).not.toHaveBeenCalled();
+  });
+
+  it("waits through SSO redirects without clicking or entering credentials", async () => {
+    const { page, clicks } = makePage({ url: "https://sso.example.edu/login", onTick: state => {
+      Object.assign(state, LIVE_SESSION, { url: `${BASE_URL}/d2l/home/123` });
+    } });
+    await expect(navigate(page)).resolves.toBe(false);
     expect(clicks).toEqual([]);
-    expect(ssoFlow.login).not.toHaveBeenCalled();
   });
 
-  it("opens visible auth for manual SSO and waits for the real Brightspace home page", async () => {
-    withConfig({ headless: false });
-    const { page } = makePage({
-      url: "https://idp.example.edu/login",
-      onTick: (state) => {
-        state.cookies = LIVE_SESSION.cookies;
-        state.d2l = true;
-        state.url = `${BASE_URL}/d2l/home/12345`;
-      },
-    });
+  it.each([
+    { url: `${BASE_URL}/d2l/login`, ...LIVE_SESSION },
+    { url: `${BASE_URL}/d2l/home`, cookies: LIVE_SESSION.cookies, d2l: false },
+    { url: "https://other.example/d2l/home", ...LIVE_SESSION },
+  ])("rejects a login shell, partial session, or foreign origin", async options => {
+    const { page } = makePage(options);
+    const start = Date.now();
+    await expect(navigate(page)).rejects.toBeInstanceOf(InteractiveLoginError);
+    expect(Date.now() - start).toBe(MANUAL_LOGIN_TIMEOUT_MS);
+  });
 
+  it("reports a closed window as interrupted login", async () => {
+    const { page } = makePage();
+    page.isClosed.mockReturnValue(true);
+    await expect(navigate(page)).rejects.toBeInstanceOf(InteractiveLoginError);
+  });
+
+  it("handles a window closed during the polling wait", async () => {
+    const { page } = makePage();
+    page.waitForTimeout.mockImplementation(async () => {
+      page.isClosed.mockReturnValue(true);
+      throw new Error("Target closed");
+    });
+    await expect(navigate(page)).rejects.toBeInstanceOf(InteractiveLoginError);
+  });
+
+  it("retries transient JavaScript context destruction during redirects", async () => {
+    const { page } = makePage({ ...LIVE_SESSION });
+    page.evaluate.mockRejectedValueOnce(new Error("Execution context was destroyed"));
     await expect(navigate(page)).resolves.toBe(false);
-    expect(ssoFlow.login).not.toHaveBeenCalled();
-    expect(page.waitForTimeout).toHaveBeenCalledOnce();
   });
 
-  it("does not treat a session cookie without a D2L JS context as authenticated", async () => {
-    const { page } = makePage({
-      url: `${BASE_URL}/d2l/home`,
-      cookies: [{ name: "d2lSessionVal", value: "abc123" }],
-      d2l: false,
-    });
-
+  it("preserves real browser transport failures", async () => {
+    const { page } = makePage({ ...LIVE_SESSION });
+    page.evaluate.mockRejectedValue(new Error("Browser transport unavailable"));
     await expect(navigate(page)).rejects.toBeInstanceOf(BrowserAuthTransportError);
-    expect(ssoFlow.login).not.toHaveBeenCalled();
   });
 
-  it("does not submit credentials after a browser cookie probe fails", async () => {
-    const { page } = makePage({ url: `${BASE_URL}/d2l/home`, visible: [EMAIL_SELECTOR] });
-    page.context = vi.fn(() => ({ cookies: vi.fn(async () => { throw new Error("Browser transport unavailable"); }) }));
-    await expect(navigate(page)).rejects.toBeInstanceOf(BrowserAuthTransportError);
-    expect(ssoFlow.login).not.toHaveBeenCalled();
-  });
-
-  it("does not submit credentials after a D2L JavaScript probe fails", async () => {
-    const { page } = makePage({ url: `${BASE_URL}/d2l/home`, ...LIVE_SESSION, visible: [EMAIL_SELECTOR] });
-    page.evaluate = vi.fn(async () => { throw new Error("Execution context unavailable"); });
-    await expect(navigate(page)).rejects.toBeInstanceOf(BrowserAuthTransportError);
-    expect(ssoFlow.login).not.toHaveBeenCalled();
-  });
-
-  it("gives up at once on a visible email field instead of burning the budget", async () => {
-    const { page } = makePage({
-      url: "https://login.microsoftonline.com/common/oauth2/authorize",
-      visible: [EMAIL_SELECTOR],
-    });
-
-    await expect(navigate(page)).resolves.toBe(false);
-    expect(page.waitForTimeout).not.toHaveBeenCalled();
-    expect(ssoFlow.login).toHaveBeenCalledOnce();
-  });
-
-  it("detects a visible later email selector independently", async () => {
-    const { page } = makePage({
-      url: "https://login.microsoftonline.com/common/oauth2/authorize",
-      visible: [ALTERNATE_EMAIL_SELECTOR],
-    });
-
-    await expect(navigate(page)).resolves.toBe(false);
-    expect(ssoFlow.login).toHaveBeenCalledOnce();
-  });
-
-  it("passes a SAOTCC-only MFA challenge to the school flow", async () => {
-    const { page } = makePage({
-      url: "https://login.microsoftonline.com/common/SAS/BeginAuth",
-      visible: [SAOTCC_SELECTOR],
-    });
-
-    await expect(navigate(page)).resolves.toBe(false);
-    expect(ssoFlow.login).toHaveBeenCalledOnce();
-  });
-
-  it("continues polling after the initial navigation times out", async () => {
-    const { page } = makePage({
-      url: `${BASE_URL}/d2l/lp/auth/login/samlLogin.d2l`,
-      ...LIVE_SESSION,
-      onTick: (state) => { state.url = `${BASE_URL}/d2l/home`; },
-    });
+  it("continues polling after initial navigation times out", async () => {
+    const { page } = makePage({ ...LIVE_SESSION });
     page.goto.mockRejectedValue(new Error("Timeout 60000ms exceeded"));
-
     await expect(navigate(page)).resolves.toBe(true);
-    expect(page.goto).toHaveBeenCalledWith(`${BASE_URL}/d2l/home`, {
-      waitUntil: "domcontentloaded",
-      timeout: 60000,
-    });
-    expect(ssoFlow.login).not.toHaveBeenCalled();
   });
 
-  it("leaves #idSIButton9 alone when nothing proves the page is the KMSI page", async () => {
-    const { page, clicks } = makePage({
-      url: "https://login.microsoftonline.com/common/login",
-      visible: [KMSI_SUBMIT],
-    });
-
+  it("preserves session state on a server outage", async () => {
+    const { page } = makePage();
+    page.goto.mockResolvedValue({ status: () => 503 } as any);
     await expect(navigate(page)).rejects.toBeInstanceOf(BrowserAuthTransportError);
-    expect(ssoFlow.login).not.toHaveBeenCalled();
-    expect(clicks).toEqual([]);
-  });
-
-  it("clicks #idSIButton9 once the KMSI checkbox proves the page", async () => {
-    const { page, clicks } = makePage({
-      url: "https://login.microsoftonline.com/common/kmsi",
-      visible: [KMSI_CHECKBOX, KMSI_SUBMIT],
-      onTick: (state) => {
-        // The click lands, the SSO chain finishes, the next poll sees a session.
-        state.visible = [];
-        state.cookies = LIVE_SESSION.cookies;
-        state.d2l = true;
-        state.url = `${BASE_URL}/d2l/home`;
-      },
-    });
-
-    await expect(navigate(page)).resolves.toBe(true);
-    expect(clicks).toEqual([KMSI_SUBMIT]);
-  });
-
-  it('accepts "Stay signed in?" as the KMSI marker when the checkbox is hidden', async () => {
-    const { page, clicks } = makePage({
-      url: "https://login.microsoftonline.com/common/kmsi",
-      visible: ["text:Stay signed in?", KMSI_SUBMIT],
-      onTick: (state) => {
-        state.visible = [];
-        state.cookies = LIVE_SESSION.cookies;
-        state.d2l = true;
-        state.url = `${BASE_URL}/d2l/home`;
-      },
-    });
-
-    await expect(navigate(page)).resolves.toBe(true);
-    expect(clicks).toEqual([KMSI_SUBMIT]);
-  });
-
-  it("clicks the campus selector only on a /d2l/login page", async () => {
-    const { page, clicks } = makePage({
-      url: `${BASE_URL}/d2l/login`,
-      visible: [CAMPUS_SELECTOR],
-      onTick: (state) => {
-        state.visible = [];
-        state.cookies = LIVE_SESSION.cookies;
-        state.d2l = true;
-        state.url = `${BASE_URL}/d2l/home`;
-      },
-    });
-
-    await expect(navigate(page)).resolves.toBe(true);
-    expect(clicks).toEqual([CAMPUS_SELECTOR]);
-  });
-
-  it("prefers the configured campus by name over the generic SAML link", async () => {
-    withConfig({ campus: "Albany" });
-    const { page, clicks } = makePage({
-      url: `${BASE_URL}/d2l/login`,
-      visible: ["text:Albany", CAMPUS_SELECTOR],
-      onTick: (state) => {
-        state.visible = [];
-        state.cookies = LIVE_SESSION.cookies;
-        state.d2l = true;
-        state.url = `${BASE_URL}/d2l/home`;
-      },
-    });
-
-    await expect(navigate(page)).resolves.toBe(true);
-    expect(clicks).toEqual(["text:Albany"]);
+    expect(page.waitForTimeout).not.toHaveBeenCalled();
   });
 });

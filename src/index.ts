@@ -193,7 +193,7 @@ if (subcommand === 'setup') {
       const transport = new StdioServerTransport();
       await server.connect(transport);
 
-      log("INFO", "Waterloo Brightspace MCP Server running on stdio (12 tools registered)");
+      log("INFO", "Waterloo Brightspace MCP Server running on stdio (13 tools registered)");
     } catch (error) {
       log("ERROR", "MCP Server failed to start", error);
       process.exit(1);

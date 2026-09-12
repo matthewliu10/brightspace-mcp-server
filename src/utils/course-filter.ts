@@ -1,5 +1,5 @@
 /**
- * Purdue Brightspace MCP Server
+ * Waterloo LEARN MCP Server
  * Copyright (c) 2026 Rohan Muppa. All rights reserved.
  * Licensed under MIT — see LICENSE file for details.
  */
@@ -39,10 +39,7 @@ export function applyCourseFilter<T extends FilterableCourse>(
 
   if (config.activeOnly) {
     filtered = filtered.filter(c => c.isActive);
-    // Every content endpoint on a closed course answers 403, and the
-    // enrollments payload says which those are. On a real Purdue account 31 of
-    // 44 active enrollments were closed past semesters, so skipping them here
-    // removes about 70 percent of the requests an all-courses call would make.
+    // Skip inaccessible closed courses even when enrollment remains active.
     filtered = filtered.filter(c => c.canAccess !== false);
   }
 

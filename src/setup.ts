@@ -12,6 +12,7 @@ import {
   type ConfigStoreData,
 } from "./utils/config-store.js";
 import { saveSecureConfig } from "./utils/secure-config.js";
+import { AUTH_PROCESS_TIMEOUT_MS } from "./auth/auth-policy.js";
 import { WATERLOO_BRIGHTSPACE_URL } from "./utils/config.js";
 
 const thisDir = path.dirname(fileURLToPath(import.meta.url));
@@ -34,7 +35,7 @@ function runAuth(): Promise<boolean> {
       process.execPath,
       [scriptPath],
       {
-        timeout: 10 * 60 * 1000,
+        timeout: AUTH_PROCESS_TIMEOUT_MS,
         env: { ...process.env },
       },
       (error) => {
@@ -74,7 +75,6 @@ async function main(): Promise<void> {
     ...existing,
     baseUrl: WATERLOO_BRIGHTSPACE_URL,
     username,
-    headless: false,
   };
   delete config.password;
   delete config.campus;

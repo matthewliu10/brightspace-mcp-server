@@ -1,190 +1,42 @@
-# LLMs.md
+# Agent notes for the Waterloo LEARN fork
 
-Guide for AI agents (Claude, Cursor, Windsurf, Copilot, Codex, etc.) helping a user install, use, or contribute to `brightspace-mcp-server`.
+This repository is the local Waterloo-only Brightspace MCP server. Read
+[README.md](README.md) for setup, tool behavior, storage, and configuration.
+“LEARN” and “Waterloo LEARN” refer to the `brightspace` MCP connection.
 
-## Read the README first
+## Work on this checkout
 
-Before anything else, read [README.md](https://github.com/RohanMuppa/brightspace-mcp-server/blob/main/README.md) for general context on what this project is, who it's for, and what a user can do with it. This file (LLMs.md) picks up from there with the concrete steps and codebase map you'll need to actually get things done.
+- Build with `npm run build`; test with `npm run test:run`.
+- Keep the MCP command pointed at this checkout's absolute `build/index.js`.
+- Authenticate from this checkout with `npm run auth`. The user completes
+  Waterloo login and Duo in the visible browser. Never request a password or
+  attempt to automate Duo approval.
+- Preserve encrypted sessions and native encryption-key identifiers when
+  refactoring. No login is needed just because the computer restarted.
+- Automatic browser retries pause five minutes after a closed/timed-out login;
+  explicit authentication bypasses that pause. Do not loop tool calls to
+  repeatedly reopen login windows.
+- Keep all course tools read-only. Tool availability does not imply every
+  endpoint is permitted by the user's enrollment.
+- Do not guess Waterloo role IDs or treat unavailable fields as zero. The
+  roster uses returned role names and reports its filtering limitation.
+- There is no npm publishing or self-update workflow for this private fork.
+  Do not replace it with the upstream `brightspace-mcp-server` npm package.
 
-## What this project is
+## Code map
 
-An MCP (Model Context Protocol) server that connects an AI client to D2L Brightspace so it can read grades, assignments, announcements, syllabus, roster, discussions, and course content on demand.
+- `src/index.ts`: stdio MCP entrypoint and tool registration
+- `src/setup.ts`: public Waterloo config and optional interactive login
+- `src/auth-cli.ts`: explicit/automatic authentication entrypoint
+- `src/auth/browser-auth.ts`: visible login, session verification, token capture
+- `src/auth/auth-policy.ts`: shared login budgets and interruption error
+- `src/auth/auth-runner.ts`: child process lifetime and progress reporting
+- `src/auth/auth-cooldown.ts`: interrupted-login retry pause
+- `src/auth/token-manager.ts`: cached token validation and HTTP renewal
+- `src/auth/*store.ts`: encrypted session storage and native key storage
+- `src/utils/config.ts`: Waterloo URL and supported config resolution
+- `src/tools/`: read-only course tools and input schemas
+- `src/api/`: API requests, pagination, rate limiting, and version discovery
 
-Distributed on npm as `brightspace-mcp-server`. Users run it via `npx`, so they always get the latest version.
-
-## Installing it for a user
-
-Follow these steps in order. Stop and report back if any step fails.
-
-### 1. Verify Node.js 20+ and native secure storage
-
-```bash
-node --version
-```
-
-If Node is missing or below v20, tell the user to install the LTS from https://nodejs.org/ and stop. Require macOS Keychain, Windows Credential Manager, or an unlocked Linux Secret Service with `secret-tool` (`libsecret-tools` on Debian/Ubuntu). Linux uses libsecret directly; secrets pass through stdin, and temporary kernel-key storage is never used. v2 has no plaintext credential fallback.
-
-### 2. Run the setup wizard
-
-```bash
-npx brightspace-mcp-server setup
-```
-
-If the user is at Purdue, use the preset:
-
-```bash
-npx brightspace-mcp-server setup --purdue
-```
-
-If the user is at a SUNY campus, use the SUNY preset. It also asks which campus
-they attend, which lets sign-in skip SUNY's shared campus picker:
-
-```bash
-npx brightspace-mcp-server setup --suny
-```
-
-The wizard:
-
-- prompts for the school's Brightspace URL (skipped with `--purdue` or `--suny`)
-- runs a headless Chromium login and prints Microsoft Authenticator number matches in the terminal
-- saves the password in the native credential store and public settings in `~/.brightspace-mcp/config.json` (0600)
-- writes the encrypted session below `~/.d2l-session/accounts/<account-hash>/` (AES-256-GCM)
-- auto-configures Claude Desktop and Cursor if detected
-
-Wait for the user to finish login and MFA before continuing.
-
-### 3. Register the MCP server in the user's AI client
-
-The server command to register is:
-
-```
-npx -y brightspace-mcp-server@latest
-```
-
-On **Windows**, wrap with cmd: `cmd /c npx -y brightspace-mcp-server@latest`.
-
-Claude Desktop and Cursor are auto-configured by the setup wizard. For any other client (Windsurf, Copilot, Codex, Zed, Continue, etc.), look up the client's current MCP config format and file path, then add an entry with the command above. Config formats and paths differ per client and change over time, so verify against current client docs rather than guessing.
-
-### 4. Restart the AI client
-
-Tell the user to fully quit and reopen their AI client so it picks up the new MCP server.
-
-## Re-auth
-
-Access tokens are re-minted from the stored session cookie without a browser. A headless browser restores encrypted state for silent SSO when required, then enters saved credentials if Microsoft needs a full login. Missed MFA pauses automatic browser authentication, including SSO redirects, for four hours to prevent repeated phone prompts. HTTP token renewal remains allowed; the explicit command below bypasses the browser cooldown. Forward the MFA number to the user as it appears and wait for phone approval. Clients may hide server logs, so a terminal is the reliable place to see the number. Network errors and locked native storage should be reported without retrying MFA.
-
-```bash
-npx brightspace-mcp-server auth
-```
-
-## Available tools
-
-Registered in `src/tools/index.ts`, schemas in `src/tools/schemas.ts`:
-
-| Tool | Purpose |
-|------|---------|
-| `get_my_courses` | List enrolled courses |
-| `get_my_grades` | Grades for a course or all courses |
-| `get_assignments` | Assignments with due dates and submission status |
-| `get_upcoming_due_dates` | Due dates across all courses within a window |
-| `get_announcements` | Recent course announcements |
-| `get_syllabus` | Syllabus document for a course |
-| `get_course_content` | Module tree and content topics |
-| `get_discussions` | Discussion forums and recent posts |
-| `get_roster` | Classlist for a course |
-| `get_classlist_emails` | Emails of classmates and instructors |
-| `download_file` | Download a file attachment (PDF, slides, etc.) to disk |
-| `get_assignment_files` | Read the files attached to an assignment (spec, rubric, starter workbook) and return their text |
-
-Quiz attempt counts are unavailable to students on the Purdue tenant: `/quizzes/{id}/attempts/` answers 403. Those quizzes carry `attemptsAvailable: false` with null counts rather than a fabricated zero.
-
-Assignments, quizzes, and due dates each carry a `url` field that deep-links into Brightspace. `get_assignments` also returns `gradeOnly` items for gradebook columns that match no assignment or quiz, such as a proctored exam. `get_upcoming_due_dates` reads `DueDate` from assignments and `DueDate ?? EndDate` from quizzes rather than the calendar feed.
-
-## Codebase map
-
-```
-src/
-  index.ts                  MCP server entrypoint, registers tools
-  setup.ts                  Setup wizard (CLI subcommand `setup`)
-  auth-cli.ts               Manual reauth (CLI subcommand `auth`)
-  update.ts                 Self-update checker
-  tools/
-    index.ts                Tool registry
-    schemas.ts              Zod input schemas for every tool
-    tool-helpers.ts         Shared helpers (course resolution, formatting)
-    get-*.ts                One file per tool
-    download-file.ts        Binary download + file-type detection
-  api/
-    client.ts               HTTP client wrapping the Valence/D2L API
-    version-discovery.ts    Resolves per-product API versions
-    cache.ts                In-memory response cache
-    rate-limiter.ts         Token-bucket limiter
-    errors.ts               API error taxonomy
-    types.ts                D2L response types
-  auth/
-    auth-runner.ts          Orchestrates reauth on 401/expiry
-    browser-auth.ts         Playwright-driven login flow
-    sso-flow.ts             Picks the login flow for the configured host
-    purdue-sso.ts           Default SSO handler (Shibboleth, CAS, Entra forms)
-    suny-sso.ts             SUNY campus selection
-    session-store.ts        AES-256-GCM token persistence and v1 migration
-    browser-state-store.ts  Encrypted cookie and browser storage persistence
-    credential-store.ts     Native password and encryption-key storage
-    auth-lock.ts            Process-shared authentication and write locks
-    auth-cooldown.ts        Failed-MFA automatic retry policy
-    token-manager.ts        Token refresh and validation
-  utils/
-    config-store.ts         ~/.brightspace-mcp/config.json reader/writer
-    config.ts               Resolved config (store + env fallback)
-    course-filter.ts        Filter enrolled vs archived courses
-    download-helpers.ts     Stream-to-disk with validation
-    file-validator.ts       Magic-byte file-type checks
-    html-converter.ts       HTML to Markdown via turndown
-    pdf-extractor.ts        PDF text extraction via unpdf
-    logger.ts               Structured logging
-    update-checker.ts       npm version comparison
-    errors.ts               User-facing error taxonomy
-  types/                    Shared TypeScript types
-```
-
-## Commands
-
-| Command | What it does |
-|---------|--------------|
-| `npx brightspace-mcp-server setup` | Interactive setup wizard |
-| `npx brightspace-mcp-server setup --purdue` | Setup with Purdue preset |
-| `npx brightspace-mcp-server setup --suny` | Setup with SUNY preset (also asks for campus) |
-| `npx brightspace-mcp-server auth` | Manual reauth |
-| `npx -y brightspace-mcp-server@latest` | Run the MCP server (registered in AI client config) |
-| `npm run build` | Compile TypeScript to `build/` |
-| `npm run dev` | Watch-mode TypeScript compile |
-| `npm run test` | Run Vitest suite |
-| `npm run test:run` | Run Vitest once |
-
-## Storage locations
-
-| Path | Contents | Permissions |
-|------|----------|-------------|
-| `~/.brightspace-mcp/config.json` | School URL, username, and public settings | 0600 |
-| `~/.d2l-session/accounts/<account-hash>/session.json` | Encrypted access token, session cookies, and XSRF token (AES-256-GCM) | 0600 |
-| `~/.d2l-session/accounts/<account-hash>/storage-state.encrypted.json` | Encrypted cookies and browser storage | 0600 |
-| Native operating-system credential store | Password and random encryption key | OS access controls |
-
-Environment values override stored configuration. An environment password is native-store input; the application does not rewrite the user's `.env` or client configuration. Account hashes bind saved state to school and username. Legacy unnamed state stays in the session root and is not replayed for a newly configured account. On upgrade, v1 secrets migrate only after verified secure writes. Retired v1 browser data may remain recoverable in Trash.
-
-## Adding a school
-
-Add a preset to `SCHOOL_PRESETS` in `src/setup.ts`. If the school uses a non-standard login flow (SAML, Shibboleth, custom SSO), add a handler in `src/auth/` alongside `purdue-sso.ts` and register it in `createSSOFlow()` in `src/auth/sso-flow.ts`.
-
-## Adding a tool
-
-1. Create `src/tools/<name>.ts` using an existing tool as a template.
-2. Add the input schema to `src/tools/schemas.ts`.
-3. Export it from `src/tools/index.ts`.
-4. Register it in `src/index.ts`.
-
-## Release workflow
-
-Publishing is automated by GitHub Actions on push to `main` when `version` in `package.json` changes, after the reusable CI matrix passes on macOS, Windows, and Linux. Keep `package.json`, the lockfile, and `server.json` versions aligned. Create the GitHub release only from the verified published commit.
-
-Always bump `version` in `package.json` in the same commit as any code or docs change. The Action skips publish if the version is unchanged, which means users will not receive the update via `npx ...@latest`.
+Generic API and storage tests use synthetic hosts intentionally. Opt-in
+Chromium fixtures intercept every request and never log in to real LEARN.

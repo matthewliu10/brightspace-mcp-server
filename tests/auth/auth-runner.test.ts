@@ -55,7 +55,7 @@ describe("AuthRunner", () => {
     await first;
   });
 
-  it.each([[2, "busy"], [3, "cooldown"], [4, "unsupported"], [5, "secureStorage"], [6, "transport"], [1, "failed"]])(
+  it.each([[2, "busy"], [3, "cooldown"], [4, "interactive"], [5, "secureStorage"], [6, "transport"], [1, "failed"]])(
     "preserves child exit %s as a %s error", async (code, kind) => {
       const result = new AuthRunner().run();
       const failure = expect(result).rejects.toMatchObject({ kind });
@@ -64,9 +64,9 @@ describe("AuthRunner", () => {
     },
   );
 
-  it("allows five minutes of MFA plus preflight before timing out", async () => {
+  it("allows ten minutes of manual login plus preflight before timing out", async () => {
     const result = new AuthRunner().run();
-    await vi.advanceTimersByTimeAsync(6 * 60000);
+    await vi.advanceTimersByTimeAsync(12 * 60000);
     expect(kill).not.toHaveBeenCalled();
     expect(child.kill).not.toHaveBeenCalled();
     child.emit("close", 0);

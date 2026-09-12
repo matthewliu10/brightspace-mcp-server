@@ -1,8 +1,7 @@
 {
-  "name": "brightspace-mcp-server",
+  "name": "waterloo-learn-mcp",
   "version": "2.0.0",
-  "mcpName": "io.github.rohanmuppa/brightspace",
-  "description": "MCP server for Brightspace (D2L). Check grades, due dates, assignments, announcements, syllabus, rosters and more via Claude, ChatGPT, Cursor, Windsurf, or any MCP client.",
+  "description": "Local read-only MCP server for University of Waterloo LEARN (Brightspace), with visible Waterloo login and Duo.",
   "type": "module",
   "main": "build/index.js",
   "bin": {
@@ -16,15 +15,14 @@
     "LICENSE"
   ],
   "scripts": {
-    "build": "tsc",
-    "prepublishOnly": "npm run build",
+    "build": "node scripts/clean-build.mjs && tsc",
     "start": "node build/index.js",
     "auth": "node build/auth-cli.js",
-    "update": "node build/update.js",
     "dev": "tsc --watch",
     "test": "vitest",
     "test:run": "vitest run",
-    "postinstall": "npx playwright install chromium"
+    "postinstall": "npx playwright install chromium",
+    "setup": "node build/setup.js"
   },
   "dependencies": {
     "@modelcontextprotocol/sdk": "^1.26.0",
@@ -51,39 +49,20 @@
   },
   "license": "MIT",
   "author": "Rohan Muppa",
-  "homepage": "https://github.com/RohanMuppa/brightspace-mcp-server",
+  "homepage": "https://github.com/matthewliu10/brightspace-mcp-server",
   "repository": {
     "type": "git",
-    "url": "https://github.com/RohanMuppa/brightspace-mcp-server.git"
+    "url": "https://github.com/matthewliu10/brightspace-mcp-server.git"
   },
   "bugs": {
-    "url": "https://github.com/RohanMuppa/brightspace-mcp-server/issues"
+    "url": "https://github.com/matthewliu10/brightspace-mcp-server/issues"
   },
   "keywords": [
-    "mcp",
-    "mcp-server",
+    "waterloo",
+    "learn",
     "brightspace",
-    "d2l",
-    "lms",
-    "education",
-    "grades",
-    "courses",
-    "claude",
-    "chatgpt",
-    "cursor",
-    "windsurf",
-    "purdue",
-    "university",
-    "model-context-protocol",
-    "brightspace-api",
-    "d2l-api",
-    "assignments",
-    "announcements",
-    "syllabus",
-    "student",
-    "ai",
-    "duo",
-    "sso",
-    "d2l-brightspace"
-  ]
+    "mcp",
+    "duo"
+  ],
+  "private": true
 }

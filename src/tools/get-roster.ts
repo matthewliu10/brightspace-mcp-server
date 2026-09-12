@@ -1,5 +1,5 @@
 /**
- * Purdue Brightspace MCP Server
+ * Waterloo LEARN MCP Server
  * Copyright (c) 2026 Rohan Muppa. All rights reserved.
  * Licensed under MIT — see LICENSE file for details.
  */
@@ -24,12 +24,6 @@ interface ClasslistUser {
   IsOnline: boolean;
   LastAccessed: string | null;
 }
-
-// Purdue-specific role IDs. These are institution-specific values.
-// If using at another institution, you may need to adjust these.
-// Discover by fetching classlist for a known course and inspecting RoleId values.
-const INSTRUCTOR_ROLE_ID = 109;
-const TA_ROLE_ID = 135;
 
 /**
  * Fetch every classlist user matching the optional filters, across all pages
@@ -82,43 +76,10 @@ export function registerGetRoster(
         // Parse and validate input
         const { courseId, includeStudents, searchTerm, limit } = GetRosterSchema.parse(args);
 
-        const allUsers: ClasslistUser[] = [];
-
-        if (!includeStudents) {
-          // Fetch instructors and TAs in parallel
-          const [instructorResult, taResult] = await Promise.allSettled([
-            fetchClasslistUsers(apiClient, courseId, {
-              roleId: INSTRUCTOR_ROLE_ID,
-              searchTerm,
-            }),
-            fetchClasslistUsers(apiClient, courseId, {
-              roleId: TA_ROLE_ID,
-              searchTerm,
-            }),
-          ]);
-
-          // Merge results
-          if (instructorResult.status === "fulfilled") {
-            allUsers.push(...instructorResult.value);
-          } else {
-            log("WARN", "get_roster: Failed to fetch instructors", {
-              error: instructorResult.reason,
-            });
-          }
-
-          if (taResult.status === "fulfilled") {
-            allUsers.push(...taResult.value);
-          } else {
-            log("WARN", "get_roster: Failed to fetch TAs", {
-              error: taResult.reason,
-            });
-          }
-        } else {
-          // Fetch all users
-          allUsers.push(
-            ...(await fetchClasslistUsers(apiClient, courseId, { searchTerm }))
-          );
-        }
+        const fetched = await fetchClasslistUsers(apiClient, courseId, { searchTerm });
+        const isTeachingRole = (user: ClasslistUser) =>
+          /\b(instructor|professor|lecturer|teaching assistant|ta)\b/i.test(user.ClasslistRoleDisplayName ?? "");
+        const allUsers = includeStudents ? fetched : fetched.filter(isTeachingRole);
 
         // A very large roster would swamp the response, so it is capped. The
         // cap is reported in the payload rather than only in a log line the
@@ -151,6 +112,7 @@ export function registerGetRoster(
           ...(truncated
             ? { note: `Showing ${users.length} of ${total}. Raise the limit argument to see more.` }
             : {}),
+          ...(!includeStudents ? { roleFilter: "Teaching roles matched from LEARN role display names; use includeStudents=true to inspect all roles." } : {}),
           users,
         });
       } catch (error) {

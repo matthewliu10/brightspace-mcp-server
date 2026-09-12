@@ -1,5 +1,5 @@
 /**
- * Purdue Brightspace MCP Server
+ * Waterloo LEARN MCP Server
  * Copyright (c) 2026 Rohan Muppa. All rights reserved.
  * Licensed under MIT — see LICENSE file for details.
  */
@@ -11,16 +11,11 @@ import * as path from "node:path";
 import { log } from "../utils/logger.js";
 import { AuthError } from "../utils/errors.js";
 
-/**
- * Timeout for the auth process. It has to outlast the child's own MFA wait,
- * which is five minutes: a person has to find their phone, unlock it, and read
- * a number off the screen. A shorter parent budget would kill the child in the
- * middle of a sign-in the user was still completing.
- */
-const AUTH_TIMEOUT_MS = 8 * 60 * 1000;
+import { AUTH_PROCESS_TIMEOUT_MS } from "./auth-policy.js";
+
 const KILL_GRACE_MS = 5000;
 
-export type AuthFailureKind = "busy" | "cooldown" | "unsupported" | "secureStorage" | "transport" | "timeout" | "failed";
+export type AuthFailureKind = "busy" | "cooldown" | "interactive" | "secureStorage" | "transport" | "timeout" | "failed";
 
 export class AuthProcessError extends AuthError {
   constructor(public readonly kind: AuthFailureKind, message: string) {
@@ -57,9 +52,8 @@ function descendantPids(parentPid: number): number[] {
 /**
  * Forward a child stream to the server log, one line at a time.
  *
- * The child writes its progress to stderr, including Entra's number-match
- * digits, which the user cannot complete a sign-in without. Discarding the
- * stream, as this used to, made an auto-reauth impossible to finish.
+ * The child writes Waterloo browser-login progress to stderr. Forward it so
+ * MCP clients can explain why a tool call is waiting for user interaction.
  */
 function forwardLines(
   stream: Readable | null,
@@ -99,7 +93,7 @@ export class AuthRunner {
     // Resolve paths relative to this file's compiled location (build/auth/auth-runner.js)
     const thisDir = path.dirname(fileURLToPath(import.meta.url));
     this.scriptPath = path.resolve(thisDir, "..", "auth-cli.js");
-    this.timeoutMs = options.timeoutMs ?? AUTH_TIMEOUT_MS;
+    this.timeoutMs = options.timeoutMs ?? AUTH_PROCESS_TIMEOUT_MS;
     this.onProgress = options.onProgress;
   }
 
@@ -168,7 +162,7 @@ export class AuthRunner {
           kill("SIGTERM");
           killTimer = setTimeout(() => {
             kill("SIGKILL");
-            finish(new AuthProcessError("timeout", "Authentication timed out. Run brightspace-auth to try again."));
+            finish(new AuthProcessError("timeout", "Authentication timed out. Run npm run auth in the local fork to try again."));
           }, KILL_GRACE_MS);
         }, this.timeoutMs);
 
@@ -184,26 +178,26 @@ export class AuthRunner {
           if (settled) return;
           log("ERROR", "Auto-auth process failed", error.message);
           kill("SIGKILL");
-          finish(new AuthProcessError("failed", "Could not start authentication. Run brightspace-auth for details."));
+          finish(new AuthProcessError("failed", "Could not start authentication. Run npm run auth in the local fork for details."));
         });
 
         child.on("close", (code) => {
           if (settled) return;
           if (timedOut) {
             kill("SIGKILL");
-            finish(new AuthProcessError("timeout", "Authentication timed out. Run brightspace-auth to try again."));
+            finish(new AuthProcessError("timeout", "Authentication timed out. Run npm run auth in the local fork to try again."));
           } else if (code === 0) {
             log("INFO", "Auto-auth completed successfully");
             finish();
           } else {
             const failures: Record<number, [AuthFailureKind, string]> = {
               2: ["busy", "Authentication already in progress in another process. Complete that attempt, then retry."],
-              3: ["cooldown", "Automatic MFA is paused after an unsuccessful attempt. Run brightspace-auth to retry immediately."],
-              4: ["unsupported", "This identity provider cannot complete headless authentication. See the authentication logs."],
+              3: ["cooldown", "Automatic Waterloo login is paused after an interrupted attempt. Run npm run auth in the local fork to retry immediately."],
+              4: ["interactive", "Waterloo login was closed or timed out. Run npm run auth in the local fork to retry."],
               5: ["secureStorage", "The native credential store is unavailable or locked. Unlock it and retry."],
               6: ["transport", "Brightspace authentication is temporarily unavailable because of a network or server failure. Your saved session was preserved. Try again later."],
             };
-            const [kind, message] = failures[code ?? -1] ?? ["failed", "Authentication failed. Run brightspace-auth to try again."];
+            const [kind, message] = failures[code ?? -1] ?? ["failed", "Authentication failed. Run npm run auth in the local fork to try again."];
             kill("SIGKILL");
             finish(new AuthProcessError(kind, message));
           }

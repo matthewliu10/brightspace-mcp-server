@@ -6,9 +6,14 @@ import * as path from "node:path";
 import { BrowserAuth } from "../../src/auth/browser-auth.js";
 import { BrowserStateStore, type BrowserState } from "../../src/auth/browser-state-store.js";
 import { nativeCredentialBackend } from "../../src/auth/credential-store.js";
-import { UnsupportedAuthenticationError } from "../../src/auth/sso-flow.js";
+import { InteractiveLoginError } from "../../src/auth/auth-policy.js";
 import type { AppConfig } from "../../src/types/index.js";
 import { MemoryCredentialBackend } from "./secure-store-fixtures.js";
+
+vi.mock("../../src/auth/auth-policy.js", async (importOriginal) => ({
+  ...await importOriginal<typeof import("../../src/auth/auth-policy.js")>(),
+  MANUAL_LOGIN_TIMEOUT_MS: 2000,
+}));
 
 const BASE = "https://brightspace.fixture.invalid";
 const IDP = "https://sso.fixture.invalid";
@@ -42,7 +47,7 @@ describe.runIf(enabled)("actual Chromium authentication fixtures", () => {
     vi.spyOn(nativeCredentialBackend, "getPassword").mockImplementation(backend.getPassword.bind(backend));
     vi.spyOn(nativeCredentialBackend, "setPassword").mockImplementation(backend.setPassword.bind(backend));
     vi.spyOn(nativeCredentialBackend, "deletePassword").mockImplementation(backend.deletePassword.bind(backend));
-    config = { baseUrl: BASE, sessionDir: dir, tokenTtl: 3600, headless: true, courseFilter: {} } as AppConfig;
+    config = { baseUrl: BASE, sessionDir: dir, tokenTtl: 3600, courseFilter: {} } as AppConfig;
     store = new BrowserStateStore(dir);
     browsers = [];
     contexts = [];
@@ -54,7 +59,7 @@ describe.runIf(enabled)("actual Chromium authentication fixtures", () => {
     const launch = chromium.launch.bind(chromium);
     browserHarness.launch.mockImplementation(async (options) => {
       launchedHeadless.push(options?.headless === true);
-      const browser = await launch({ ...options, timeout: 15_000 });
+      const browser = await launch({ ...options, headless: true, timeout: 15_000 });
       browsers.push(browser);
       const newContext = browser.newContext.bind(browser);
       vi.spyOn(browser, "newContext").mockImplementation(async (contextOptions) => {
@@ -102,15 +107,16 @@ describe.runIf(enabled)("actual Chromium authentication fixtures", () => {
       }
       return route.abort("blockedbyclient");
     };
-    await expect(new BrowserAuth(config).authenticate()).rejects.toBeInstanceOf(UnsupportedAuthenticationError);
+    const auth = new BrowserAuth(config);
+    await expect(auth.authenticate()).rejects.toBeInstanceOf(InteractiveLoginError);
     expect(observed).toContain("/d2l/login");
     expect(fetch).not.toHaveBeenCalled();
-    expect(launchedHeadless).toEqual([true]);
+    expect(launchedHeadless).toEqual([false]);
     expect(await fs.readFile(path.join(dir, "storage-state.encrypted.json"), "utf8")).toBe(before);
     expect(browsers.every((browser) => !browser.isConnected())).toBe(true);
   }, 20_000);
 
-  it("silently restores SSO and local storage across two fresh headless browsers", async () => {
+  it("silently restores SSO and local storage across two fresh browser contexts", async () => {
     await store.save({
       cookies: [cookie("d2lSessionVal", "stale-cookie", "brightspace.fixture.invalid"), cookie("d2lSecureSessionVal", "stale-secure", "brightspace.fixture.invalid"), cookie("fixture-entra-session", "saved-idp-session", "sso.fixture.invalid")],
       origins: [{ origin: BASE, localStorage: [{ name: "fixture-marker", value: "saved-local-storage" }] }],
@@ -135,7 +141,7 @@ describe.runIf(enabled)("actual Chromium authentication fixtures", () => {
           localStorage.setItem('fixture-visits', String(Number(localStorage.getItem('fixture-visits') || 0) + 1));
         </script></body>` });
       }
-      if (url.pathname === "/d2l/login") return route.fulfill({ contentType: "text/html", body: '<!doctype html><script>window.D2L={LP:{}};</script><a href="/d2l/lp/auth/saml/initiate-login">Campus</a>' });
+      if (url.pathname === "/d2l/login") return navigateFixture(route, `${IDP}/authorize`);
       if (url.pathname === "/d2l/lp/auth/saml/initiate-login") return navigateFixture(route, `${IDP}/authorize`);
       if (url.pathname === "/saml-complete") return route.fulfill({ contentType: "text/html", body: `<!doctype html><script>
         document.cookie='d2lSessionVal=fresh-cookie; Path=/; Secure; SameSite=None';
@@ -160,7 +166,7 @@ describe.runIf(enabled)("actual Chromium authentication fixtures", () => {
     const second = await new BrowserAuth(config).authenticate();
     expect(second.cookieHeader).toContain("d2lSessionVal=fresh-cookie");
     expect(idpVisits).toBe(1);
-    expect(launchedHeadless).toEqual([true, true]);
+    expect(launchedHeadless).toEqual([false, false]);
     expect(contexts[0]).not.toBe(contexts[1]);
     expect(restoredMarkers).toEqual(["saved-local-storage", "saved-local-storage"]);
     expect(mint).toHaveBeenCalledTimes(2);

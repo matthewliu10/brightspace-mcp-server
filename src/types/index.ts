@@ -1,5 +1,5 @@
 /**
- * Purdue Brightspace MCP Server
+ * Waterloo LEARN MCP Server
  * Copyright (c) 2026 Rohan Muppa. All rights reserved.
  * Licensed under MIT — see LICENSE file for details.
  */
@@ -46,11 +46,7 @@ export interface AppConfig {
   /** This run verified encrypted legacy browser state before optional profile retirement. */
   legacyBrowserStateMigrated?: boolean;
   tokenTtl: number; // seconds
-  headless: boolean;
   username?: string;
-  password?: string;
-  /** Campus within a shared multi-campus Brightspace instance. */
-  campus?: string;
   courseFilter: CourseFilterConfig;
 }
 
