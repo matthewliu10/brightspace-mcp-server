@@ -15,16 +15,11 @@ const pkg = JSON.parse(readFileSync(path.resolve(path.dirname(fileURLToPath(impo
 
 async function main(): Promise<void> {
   const automatic = process.argv.includes("--automatic");
-  if (process.argv.includes("--visible")) process.env.D2L_HEADLESS = "false";
-  if (process.argv.includes("--headless")) process.env.D2L_HEADLESS = "true";
   try {
     const config = await loadConfig();
     console.error(`\n=== Brightspace Authentication v${pkg.version} ===\n`);
-    if (config.headless) {
-      console.error("Authentication runs headlessly. If Microsoft requests MFA, the number appears here.");
-    } else {
-      console.error("Authentication will open a browser window. Finish your school login and MFA there.");
-    }
+    console.error("Authentication opens Waterloo LEARN in a browser window.");
+    console.error("Finish your normal Waterloo login and Duo prompt there.");
 
     const tokenManager = new TokenManager({
       sessionDir: config.sessionDir,
@@ -50,8 +45,8 @@ async function main(): Promise<void> {
       : code === "AUTH_UNSUPPORTED" ? 4
       : code === "AUTH_TRANSPORT" ? 6 : 1;
     console.error("\nAuthentication failed:", error instanceof Error ? error.message : "Unknown authentication error");
-    console.error("Run `npx brightspace-mcp-server setup` to update saved credentials.");
-    console.error("Run `npx brightspace-mcp-server auth` to retry explicitly. This bypasses the automatic MFA cooldown.");
+    console.error("Run `node build/setup.js` to update saved local config.");
+    console.error("Run `node build/auth-cli.js` to retry Waterloo browser login.");
   }
 }
 

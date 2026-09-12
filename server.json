@@ -1,9 +1,9 @@
 {
   "$schema": "https://static.modelcontextprotocol.io/schemas/2025-12-11/server.schema.json",
-  "name": "io.github.rohanmuppa/brightspace",
-  "description": "MCP server for D2L Brightspace. Check grades, assignments, due dates, and announcements.",
+  "name": "io.github.matthewliu10/waterloo-brightspace",
+  "description": "Local MCP server for Waterloo LEARN. Check grades, assignments, due dates, and announcements.",
   "repository": {
-    "url": "https://github.com/RohanMuppa/brightspace-mcp-server",
+    "url": "https://github.com/matthewliu10/brightspace-mcp-server",
     "source": "github"
   },
   "version": "2.0.0",
@@ -17,24 +17,10 @@
       },
       "environmentVariables": [
         {
-          "name": "D2L_BASE_URL",
-          "description": "Your school's Brightspace URL. Default: https://purdue.brightspace.com. Normally set by the setup wizard in ~/.brightspace-mcp/config.json instead.",
-          "isRequired": false,
-          "format": "string",
-          "isSecret": false
-        },
-        {
           "name": "D2L_SESSION_DIR",
           "description": "Local root for separate per-school/account directories containing encrypted tokens and browser storage. Encryption keys are kept in the native credential store. Default: ~/.d2l-session",
           "isRequired": false,
           "format": "filepath",
-          "isSecret": false
-        },
-        {
-          "name": "D2L_HEADLESS",
-          "description": "Deprecated compatibility setting. Authentication in v2 always runs headlessly. MFA number matches are printed in the terminal.",
-          "isRequired": false,
-          "format": "boolean",
           "isSecret": false
         },
         {
@@ -61,13 +47,6 @@
         {
           "name": "D2L_ACTIVE_ONLY",
           "description": "Only return courses whose enrollment is active. Default: true",
-          "isRequired": false,
-          "format": "boolean",
-          "isSecret": false
-        },
-        {
-          "name": "D2L_NO_UPDATE_CHECK",
-          "description": "Set to any value to disable the startup check against the npm registry for a newer version.",
           "isRequired": false,
           "format": "boolean",
           "isSecret": false
