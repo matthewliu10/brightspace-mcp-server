@@ -30,8 +30,9 @@ export async function loadConfig(): Promise<AppConfig> {
       ? expandTilde(store.sessionDir)
       : path.join(os.homedir(), ".d2l-session");
 
-  // Authentication always runs without a visible browser in v2.
-  const headless = true;
+  // Visible auth is useful for schools whose Duo/SSO flow cannot be driven
+  // reliably in headless Chromium. Default remains headless for compatibility.
+  const headless = resolveHeadless(process.env.D2L_HEADLESS, store?.headless);
 
   // Resolve tokenTtl: env > store > default (3600)
   const tokenTtl = process.env.D2L_TOKEN_TTL
@@ -94,6 +95,13 @@ function expandTilde(filePath: string): string {
     return path.join(os.homedir(), filePath.slice(1));
   }
   return filePath;
+}
+
+function resolveHeadless(envValue: string | undefined, storedValue: boolean | undefined): boolean {
+  if (envValue !== undefined) {
+    return !["0", "false", "no", "off"].includes(envValue.trim().toLowerCase());
+  }
+  return storedValue ?? true;
 }
 
 export type { AppConfig };

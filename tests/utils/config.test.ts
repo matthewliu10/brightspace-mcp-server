@@ -28,7 +28,7 @@ describe("resolved authentication configuration", () => {
     const config = await loadConfig();
     expect(config).toMatchObject({
       baseUrl: "https://school.example", username: "alice", password: "native-password",
-      sessionRoot: root, sessionDir: accountSessionDirectory(root, "https://school.example", "alice"), headless: true,
+      sessionRoot: root, sessionDir: accountSessionDirectory(root, "https://school.example", "alice"), headless: false,
     });
     expect(fake.dotenv).toHaveBeenCalledWith({ quiet: true });
     expect(fake.password).toHaveBeenCalledWith("https://school.example", "alice", null);

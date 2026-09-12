@@ -20,6 +20,8 @@ import { mintAccessToken } from "./token-mint.js";
 const SILENT_SSO_TIMEOUT_MS = 30000;
 const SILENT_SSO_POLL_MS = 1000;
 const INITIAL_NAVIGATION_TIMEOUT_MS = 60000;
+const MANUAL_LOGIN_TIMEOUT_MS = 10 * 60 * 1000;
+const MANUAL_LOGIN_POLL_MS = 1000;
 const SILENT_SSO = {
   emailFields: ["input[type=email]", "input[name=loginfmt]"],
   credentialFields: ['input#username', 'input#userName', 'input[type="password"]'],
@@ -104,7 +106,7 @@ export class BrowserAuth {
       const args = ["--disable-blink-features=AutomationControlled"];
       if (BrowserAuth.isWSLOrDocker()) args.push("--no-sandbox", "--disable-setuid-sandbox");
       // Use Playwright's own timeout, which cleans up an unsuccessful launch.
-      browser = await chromium.launch({ headless: true, timeout: 60000, args });
+      browser = await chromium.launch({ headless: this.config.headless, timeout: 60000, args });
       process.once("SIGINT", closeOnSignal);
       process.once("SIGTERM", closeOnSignal);
       context = await browser.newContext({ viewport: { width: 1280, height: 720 }, storageState: state });
@@ -140,7 +142,7 @@ export class BrowserAuth {
       }
       if (!token) throw new BrowserAuthError("Brightspace did not provide a usable API token. Saved SSO cookies have been preserved.", "token_extraction");
       if (interrupted) throw new BrowserAuthError("Authentication interrupted", "interrupted");
-      log("INFO", "Headless authentication complete");
+      log("INFO", `${this.config.headless ? "Headless" : "Visible"} authentication complete`);
       return { ...token, ...material, tenantOrigin: new URL(this.config.baseUrl).origin };
     } finally {
       process.removeListener("SIGINT", closeOnSignal);
@@ -268,6 +270,9 @@ export class BrowserAuth {
     if (response && (response.status() >= 500 || response.status() === 429)) {
       throw new BrowserAuthTransportError(`Brightspace temporarily returned HTTP ${response.status()}. Saved state is preserved.`);
     }
+    if (!this.config.headless) {
+      return await this.waitForManualLogin(page);
+    }
     if (await this.awaitSilentSSO(page)) {
       log("INFO", "Saved session is active");
       return true;
@@ -294,6 +299,33 @@ export class BrowserAuth {
       throw new BrowserAuthError("Sign-in did not produce a verified Brightspace session.", "session_validation");
     }
     return false;
+  }
+
+  /**
+   * Let the user complete school-specific SSO/MFA in a visible browser. This
+   * avoids hardcoding Duo, ADFS, or campus-specific selectors while still using
+   * the existing Brightspace cookie/token harvesting after login succeeds.
+   */
+  private async waitForManualLogin(page: Page): Promise<boolean> {
+    if (await this.hasLiveSession(page)) {
+      log("INFO", "Saved session is active");
+      return true;
+    }
+
+    log("WARN", "A browser window is open for Brightspace authentication.");
+    log("WARN", `Finish logging in at ${this.config.baseUrl}, including Duo/MFA if prompted.`);
+    log("WARN", "This command will continue automatically once Brightspace reaches the course home page.");
+
+    const deadline = Date.now() + MANUAL_LOGIN_TIMEOUT_MS;
+    while (Date.now() < deadline) {
+      if (await this.hasLiveSession(page)) {
+        log("INFO", "Visible login successful - verified Brightspace home");
+        return false;
+      }
+      await page.waitForTimeout(MANUAL_LOGIN_POLL_MS);
+    }
+
+    throw new UnsupportedAuthenticationError("Visible sign-in did not reach Brightspace within 10 minutes.");
   }
 
   /**
